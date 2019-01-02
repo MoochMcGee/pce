@@ -32,8 +32,8 @@ class CPU : public ::CPU
   friend class CachedInterpreterBackend;
   friend class Interpreter;
   friend class InterpreterBackend;
-  friend class JitX64Backend;
-  friend class JitX64CodeGenerator;
+  friend class RecompilerBackend;
+  friend class RecompilerCodeGenerator;
 
 public:
   static constexpr uint32 SERIALIZATION_ID = MakeSerializationID('C', 'P', 'U', 'C');

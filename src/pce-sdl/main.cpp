@@ -30,8 +30,8 @@ int main(int argc, char* argv[])
   g_pLog->SetFilterLevel(LOGLEVEL_INFO);
   // g_pLog->SetFilterLevel(LOGLEVEL_PROFILE);
 #else
-  // g_pLog->SetFilterLevel(LOGLEVEL_TRACE);
-  g_pLog->SetFilterLevel(LOGLEVEL_DEBUG);
+  g_pLog->SetFilterLevel(LOGLEVEL_TRACE);
+  // g_pLog->SetFilterLevel(LOGLEVEL_DEBUG);
 #endif
 
   // init sdl

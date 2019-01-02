@@ -1,4 +1,4 @@
-#include "jitx64_codegen.h"
+#include "recompiler_code_generator.h"
 #include "../system.h"
 #include "YBaseLib/Log.h"
 #include "debugger_interface.h"
@@ -27,15 +27,15 @@ namespace CPU_X86 {
 //         Panic("Failed to protect code pointer");
 // }
 
-JitX64Backend::Block::Block(const BlockKey key) : BlockBase(key) {}
+RecompilerBackend::Block::Block(const BlockKey key) : BlockBase(key) {}
 
-JitX64Backend::Block::~Block()
+RecompilerBackend::Block::~Block()
 {
   //     if (code_pointer)
   //         Xbyak::AlignedFree(reinterpret_cast<void*>(code_pointer));
 }
 
-JitX64CodeGenerator::JitX64CodeGenerator(JitX64Backend* backend, void* code_ptr, size_t code_size)
+RecompilerCodeGenerator::RecompilerCodeGenerator(RecompilerBackend* backend, void* code_ptr, size_t code_size)
   : Xbyak::CodeGenerator(code_size, code_ptr), m_backend(backend), m_cpu(backend->m_cpu)
 #if ABI_WIN64
     ,
@@ -84,9 +84,9 @@ JitX64CodeGenerator::JitX64CodeGenerator(JitX64Backend* backend, void* code_ptr,
   mov(dword[RCPUPTR + offsetof(CPU, m_current_ESP)], RTEMP32B);
 }
 
-JitX64CodeGenerator::~JitX64CodeGenerator() {}
+RecompilerCodeGenerator::~RecompilerCodeGenerator() {}
 
-std::pair<const void*, size_t> JitX64CodeGenerator::FinishBlock()
+std::pair<const void*, size_t> RecompilerCodeGenerator::FinishBlock()
 {
   Assert(m_delayed_eip_add == 0 && m_delayed_cycles_add == 0);
 
@@ -109,7 +109,7 @@ std::pair<const void*, size_t> JitX64CodeGenerator::FinishBlock()
   return std::make_pair(reinterpret_cast<const void*>(getCode()), getSize());
 }
 
-bool JitX64CodeGenerator::CompileInstruction(const Instruction* instruction, bool is_final)
+bool RecompilerCodeGenerator::CompileInstruction(const Instruction* instruction, bool is_final)
 {
   bool result;
   switch (instruction->operation)
@@ -190,7 +190,7 @@ bool JitX64CodeGenerator::CompileInstruction(const Instruction* instruction, boo
   return result;
 }
 
-uint32 JitX64CodeGenerator::CalculateRegisterOffset(Reg8 reg)
+uint32 RecompilerCodeGenerator::CalculateRegisterOffset(Reg8 reg)
 {
   // Ugly but necessary due to the structure layout.
   switch (reg)
@@ -217,7 +217,7 @@ uint32 JitX64CodeGenerator::CalculateRegisterOffset(Reg8 reg)
   }
 }
 
-uint32 JitX64CodeGenerator::CalculateRegisterOffset(Reg16 reg)
+uint32 RecompilerCodeGenerator::CalculateRegisterOffset(Reg16 reg)
 {
   // Ugly but necessary due to the structure layout.
   switch (reg)
@@ -244,17 +244,17 @@ uint32 JitX64CodeGenerator::CalculateRegisterOffset(Reg16 reg)
   }
 }
 
-uint32 JitX64CodeGenerator::CalculateRegisterOffset(Reg32 reg)
+uint32 RecompilerCodeGenerator::CalculateRegisterOffset(Reg32 reg)
 {
   return uint32(offsetof(CPU, m_registers.reg32[0]) + (reg * sizeof(uint32)));
 }
 
-uint32 JitX64CodeGenerator::CalculateSegmentRegisterOffset(Segment segment)
+uint32 RecompilerCodeGenerator::CalculateSegmentRegisterOffset(Segment segment)
 {
   return uint32(offsetof(CPU, m_registers.segment_selectors[0]) + (segment * sizeof(uint16)));
 }
 
-void JitX64CodeGenerator::CalculateEffectiveAddress(const Instruction* instruction)
+void RecompilerCodeGenerator::CalculateEffectiveAddress(const Instruction* instruction)
 {
 #if 0
   for (size_t i = 0; i < countof(instruction->operands); i++)
@@ -357,13 +357,13 @@ void JitX64CodeGenerator::CalculateEffectiveAddress(const Instruction* instructi
 #endif
 }
 
-bool JitX64CodeGenerator::IsConstantOperand(const Instruction* instruction, size_t index)
+bool RecompilerCodeGenerator::IsConstantOperand(const Instruction* instruction, size_t index)
 {
   const Instruction::Operand* operand = &instruction->operands[index];
   return (operand->mode == OperandMode_Immediate);
 }
 
-uint32 JitX64CodeGenerator::GetConstantOperand(const Instruction* instruction, size_t index, bool sign_extend)
+uint32 RecompilerCodeGenerator::GetConstantOperand(const Instruction* instruction, size_t index, bool sign_extend)
 {
   const Instruction::Operand* operand = &instruction->operands[index];
   DebugAssert(operand->mode == OperandMode_Immediate);
@@ -410,8 +410,8 @@ static void WriteMemoryDWordTrampoline(CPU* cpu, uint32 segment, uint32 offset, 
   cpu->WriteMemoryDWord(static_cast<Segment>(segment), offset, value);
 }
 
-void JitX64CodeGenerator::ReadOperand(const Instruction* instruction, size_t index, const Xbyak::Reg& dest,
-                                      bool sign_extend)
+void RecompilerCodeGenerator::ReadOperand(const Instruction* instruction, size_t index, const Xbyak::Reg& dest,
+                                          bool sign_extend)
 {
   const Instruction::Operand* operand = &instruction->operands[index];
   OperandSize output_size;
@@ -628,7 +628,7 @@ void JitX64CodeGenerator::ReadOperand(const Instruction* instruction, size_t ind
   }
 }
 
-void JitX64CodeGenerator::WriteOperand(const Instruction* instruction, size_t index, const Xbyak::Reg& src)
+void RecompilerCodeGenerator::WriteOperand(const Instruction* instruction, size_t index, const Xbyak::Reg& src)
 {
 #if 0
   const Instruction::Operand* operand = &instruction->operands[index];
@@ -700,8 +700,8 @@ void JitX64CodeGenerator::WriteOperand(const Instruction* instruction, size_t in
 #endif
 }
 
-void JitX64CodeGenerator::ReadFarAddressOperand(const Instruction* instruction, size_t index,
-                                                const Xbyak::Reg& dest_segment, const Xbyak::Reg& dest_offset)
+void RecompilerCodeGenerator::ReadFarAddressOperand(const Instruction* instruction, size_t index,
+                                                    const Xbyak::Reg& dest_segment, const Xbyak::Reg& dest_offset)
 {
 #if 0
   const Instruction::Operand* operand = &instruction->operands[index];
@@ -756,7 +756,7 @@ void JitX64CodeGenerator::ReadFarAddressOperand(const Instruction* instruction, 
 #endif
 }
 
-void JitX64CodeGenerator::UpdateFlags(uint32 clear_mask, uint32 set_mask, uint32 host_mask)
+void RecompilerCodeGenerator::UpdateFlags(uint32 clear_mask, uint32 set_mask, uint32 host_mask)
 {
   // Shouldn't be clearing/setting any bits we're also getting from the host.
   DebugAssert((host_mask & clear_mask) == 0 && (host_mask & set_mask) == 0);
@@ -883,7 +883,7 @@ inline bool CanInstructionFault(const Instruction* instruction)
   }
 }
 
-void JitX64CodeGenerator::SyncInstructionPointers(const Instruction* next_instruction)
+void RecompilerCodeGenerator::SyncInstructionPointers(const Instruction* next_instruction)
 {
   if (next_instruction->GetAddressSize() == AddressSize_16)
   {
@@ -920,7 +920,7 @@ void JitX64CodeGenerator::SyncInstructionPointers(const Instruction* next_instru
   m_delayed_cycles_add = 0;
 }
 
-void JitX64CodeGenerator::StartInstruction(const Instruction* instruction)
+void RecompilerCodeGenerator::StartInstruction(const Instruction* instruction)
 {
 #ifndef Y_BUILD_CONFIG_RELEASE
   nop();
@@ -973,7 +973,7 @@ void JitX64CodeGenerator::StartInstruction(const Instruction* instruction)
   m_delayed_cycles_add = 0;
 }
 
-void JitX64CodeGenerator::EndInstruction(const Instruction* instruction, bool update_eip, bool update_esp)
+void RecompilerCodeGenerator::EndInstruction(const Instruction* instruction, bool update_eip, bool update_esp)
 {
   if (CanInstructionFault(instruction))
   {
@@ -1010,7 +1010,7 @@ void JitX64CodeGenerator::EndInstruction(const Instruction* instruction, bool up
 #endif
 }
 
-bool JitX64CodeGenerator::Compile_NOP(const Instruction* instruction)
+bool RecompilerCodeGenerator::Compile_NOP(const Instruction* instruction)
 {
   StartInstruction(instruction);
   EndInstruction(instruction);
@@ -1631,62 +1631,62 @@ bool JitX64CodeGenerator::Compile_DoublePrecisionShift(const Instruction* instru
 #endif
 
 // Necessary due to BranchTo being a member function.
-void JitX64CodeGenerator::BranchToTrampoline(CPU* cpu, uint32 address)
+void RecompilerCodeGenerator::BranchToTrampoline(CPU* cpu, uint32 address)
 {
   cpu->BranchTo(address);
 }
 
-void JitX64CodeGenerator::PushWordTrampoline(CPU* cpu, uint16 value)
+void RecompilerCodeGenerator::PushWordTrampoline(CPU* cpu, uint16 value)
 {
   cpu->PushWord(value);
 }
 
-void JitX64CodeGenerator::PushDWordTrampoline(CPU* cpu, uint32 value)
+void RecompilerCodeGenerator::PushDWordTrampoline(CPU* cpu, uint32 value)
 {
   cpu->PushDWord(value);
 }
 
-uint16 JitX64CodeGenerator::PopWordTrampoline(CPU* cpu)
+uint16 RecompilerCodeGenerator::PopWordTrampoline(CPU* cpu)
 {
   return cpu->PopWord();
 }
 
-uint32 JitX64CodeGenerator::PopDWordTrampoline(CPU* cpu)
+uint32 RecompilerCodeGenerator::PopDWordTrampoline(CPU* cpu)
 {
   return cpu->PopDWord();
 }
 
-void JitX64CodeGenerator::LoadSegmentRegisterTrampoline(CPU* cpu, uint32 segment, uint16 value)
+void RecompilerCodeGenerator::LoadSegmentRegisterTrampoline(CPU* cpu, uint32 segment, uint16 value)
 {
   cpu->LoadSegmentRegister(static_cast<Segment>(segment), value);
 }
 
-void JitX64CodeGenerator::RaiseExceptionTrampoline(CPU* cpu, uint32 interrupt, uint32 error_code)
+void RecompilerCodeGenerator::RaiseExceptionTrampoline(CPU* cpu, uint32 interrupt, uint32 error_code)
 {
   cpu->RaiseException(interrupt, error_code);
 }
 
-void JitX64CodeGenerator::SetFlagsTrampoline(CPU* cpu, uint32 flags)
+void RecompilerCodeGenerator::SetFlagsTrampoline(CPU* cpu, uint32 flags)
 {
   cpu->SetFlags(flags);
 }
 
-void JitX64CodeGenerator::FarJumpTrampoline(CPU* cpu, uint16 segment_selector, uint32 offset, uint32 op_size)
+void RecompilerCodeGenerator::FarJumpTrampoline(CPU* cpu, uint16 segment_selector, uint32 offset, uint32 op_size)
 {
   cpu->FarJump(segment_selector, offset, static_cast<OperandSize>(op_size));
 }
 
-void JitX64CodeGenerator::FarCallTrampoline(CPU* cpu, uint16 segment_selector, uint32 offset, uint32 op_size)
+void RecompilerCodeGenerator::FarCallTrampoline(CPU* cpu, uint16 segment_selector, uint32 offset, uint32 op_size)
 {
   cpu->FarCall(segment_selector, offset, static_cast<OperandSize>(op_size));
 }
 
-void JitX64CodeGenerator::FarReturnTrampoline(CPU* cpu, uint32 op_size, uint32 pop_count)
+void RecompilerCodeGenerator::FarReturnTrampoline(CPU* cpu, uint32 op_size, uint32 pop_count)
 {
   cpu->FarReturn(static_cast<OperandSize>(op_size), pop_count);
 }
 
-bool JitX64CodeGenerator::Compile_JumpConditional(const Instruction* instruction)
+bool RecompilerCodeGenerator::Compile_JumpConditional(const Instruction* instruction)
 {
   StartInstruction(instruction);
 
@@ -1880,7 +1880,7 @@ bool JitX64CodeGenerator::Compile_JumpConditional(const Instruction* instruction
   return true;
 }
 
-bool JitX64CodeGenerator::Compile_JumpCallReturn(const Instruction* instruction)
+bool RecompilerCodeGenerator::Compile_JumpCallReturn(const Instruction* instruction)
 {
   StartInstruction(instruction);
   CalculateEffectiveAddress(instruction);
@@ -2035,7 +2035,7 @@ bool JitX64CodeGenerator::Compile_JumpCallReturn(const Instruction* instruction)
   return true;
 }
 
-bool JitX64CodeGenerator::Compile_Stack(const Instruction* instruction)
+bool RecompilerCodeGenerator::Compile_Stack(const Instruction* instruction)
 {
   // if (instruction->operands[0].mode == AddressingMode_SegmentRegister && instruction->operation == Operation_POP)
   // return Compile_Fallback(instruction);
@@ -2151,7 +2151,7 @@ bool JitX64CodeGenerator::Compile_Stack(const Instruction* instruction)
   return true;
 }
 
-bool JitX64CodeGenerator::Compile_Flags(const Instruction* instruction)
+bool RecompilerCodeGenerator::Compile_Flags(const Instruction* instruction)
 {
   StartInstruction(instruction);
 
@@ -2175,14 +2175,14 @@ bool JitX64CodeGenerator::Compile_Flags(const Instruction* instruction)
   return true;
 }
 
-void JitX64CodeGenerator::InterpretInstructionTrampoline(CPU* cpu, const Instruction* instruction)
+void RecompilerCodeGenerator::InterpretInstructionTrampoline(CPU* cpu, const Instruction* instruction)
 {
   std::memcpy(&cpu->idata, &instruction->data, sizeof(cpu->idata));
   // instruction->interpreter_handler(cpu);
   Panic("Fixme");
 }
 
-bool JitX64CodeGenerator::Compile_Fallback(const Instruction* instruction)
+bool RecompilerCodeGenerator::Compile_Fallback(const Instruction* instruction)
 {
   // REP instructions are always annoying.
   std::unique_ptr<Xbyak::Label> rep_label;

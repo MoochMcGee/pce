@@ -4,17 +4,17 @@
 #include "pce/cpu_x86/cpu_x86.h"
 #include <unordered_map>
 
+class JitCodeBuffer;
+
 namespace CPU_X86 {
 
-class JitX64Code;
-
-class JitX64Backend : public CodeCacheBackend
+class RecompilerBackend : public CodeCacheBackend
 {
-  friend class JitX64CodeGenerator;
+  friend class RecompilerCodeGenerator;
 
 public:
-  JitX64Backend(CPU* cpu);
-  ~JitX64Backend();
+  RecompilerBackend(CPU* cpu);
+  ~RecompilerBackend();
 
   void Reset() override;
   void Execute() override;
@@ -63,6 +63,6 @@ private:
   bool m_current_block_flushed = false;
   bool m_code_buffer_overflow = false;
 
-  std::unique_ptr<JitX64Code> m_code_space;
+  std::unique_ptr<JitCodeBuffer> m_code_space;
 };
 } // namespace CPU_X86

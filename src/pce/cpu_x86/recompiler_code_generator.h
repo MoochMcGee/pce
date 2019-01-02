@@ -2,7 +2,7 @@
 #include <utility>
 
 #include "pce/cpu_x86/decoder.h"
-#include "pce/cpu_x86/jitx64_backend.h"
+#include "pce/cpu_x86/recompiler_backend.h"
 #include "xbyak.h"
 
 // ABI Selection
@@ -22,18 +22,18 @@
 
 namespace CPU_X86 {
 
-class JitX64CodeGenerator : private Xbyak::CodeGenerator
+class RecompilerCodeGenerator : private Xbyak::CodeGenerator
 {
 public:
-  JitX64CodeGenerator(JitX64Backend* backend, void* code_ptr, size_t code_size);
-  ~JitX64CodeGenerator();
+  RecompilerCodeGenerator(RecompilerBackend* backend, void* code_ptr, size_t code_size);
+  ~RecompilerCodeGenerator();
 
   std::pair<const void*, size_t> FinishBlock();
 
   bool CompileInstruction(const Instruction* instruction, bool is_final);
 
 private:
-  JitX64Backend* m_backend;
+  RecompilerBackend* m_backend;
   CPU* m_cpu;
 
   // Temp registers, destroyed on function call
