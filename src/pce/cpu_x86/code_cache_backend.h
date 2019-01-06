@@ -90,6 +90,8 @@ protected:
 
   static bool IsExitBlockInstruction(const Instruction* instruction);
   static bool IsLinkableExitInstruction(const Instruction* instruction);
+  static bool CanInstructionFault(const Instruction* instruction);
+  static bool OperandIsESP(const Instruction* instruction, const Instruction::Operand& operand);
 
   /// Allocates storage for a block.
   virtual BlockBase* AllocateBlock(const BlockKey key) = 0;

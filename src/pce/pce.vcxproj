@@ -43,6 +43,15 @@
     <ClCompile Include="cpu_x86\decoder.cpp" />
     <ClCompile Include="cpu_x86\interpreter_backend.cpp" />
     <ClCompile Include="cpu_x86\cycles.cpp" />
+    <ClCompile Include="cpu_x86\recompiler_code_generator_x64.cpp" />
+    <ClCompile Include="cpu_x86\recompiler_code_generator_x64.dasc.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugFast|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugFast|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="dma_controller.cpp" />
     <ClCompile Include="hw\adlib.cpp" />
     <ClCompile Include="hw\ata_device.cpp" />

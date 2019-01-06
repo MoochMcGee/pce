@@ -15,6 +15,8 @@
 #error Unknown platform/ABI.
 #endif
 
+struct dasm_State;
+
 // TODO: Block leaking on invalidation
 // TODO: Remove physical references when block is destroyed
 // TODO: block linking
@@ -124,6 +126,7 @@ private:
   bool Compile_Fallback(const Instruction* instruction);
 
   // Helper/wrapper methods.
+  static void GenerateTrampolines(dasm_State* Dst);
   static void BranchToTrampoline(CPU* cpu, uint32 address);
   static void PushWordTrampoline(CPU* cpu, uint16 value);
   static void PushDWordTrampoline(CPU* cpu, uint32 value);

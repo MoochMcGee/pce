@@ -613,54 +613,58 @@ enum JumpCondition : uint8
   JumpCondition_Count
 };
 
-struct InstructionData
+union InstructionData
 {
-  union // +0
+  struct
   {
-    uint32 imm32;
-    uint16 imm16;
-    uint8 imm8;
-  };
-  union // +4
-  {
-    uint32 disp32;
-    uint16 disp16;
-    uint8 disp8;
-    uint32 imm2_32;
-    uint16 imm2_16;
-    uint8 imm2_8;
-  };
-
-  OperandSize operand_size; // +8
-  AddressSize address_size; // +9
-  Segment segment;          // +10
-  union                     // +11
-  {
-    BitField<uint8, uint8, 0, 3> modrm_rm;
-    BitField<uint8, uint8, 3, 3> modrm_reg;
-    BitField<uint8, uint8, 6, 2> modrm_mod;
-    uint8 modrm;
-  };
-  union // +12
-  {
-    BitField<uint8, Reg32, 0, 3> sib_base_reg;
-    BitField<uint8, Reg32, 3, 3> sib_index_reg;
-    BitField<uint8, uint8, 6, 2> sib_scaling_factor;
-    uint8 sib;
-  };
-  union // +13
-  {
-    struct
+    union // +0
     {
-      uint8 modrm_rm_register : 1;
-      uint8 has_segment_override : 1;
-      uint8 has_rep : 1;
-      uint8 has_repne : 1;
-      uint8 has_lock : 1;
-      uint8 : 3;
+      uint32 imm32;
+      uint16 imm16;
+      uint8 imm8;
     };
-    uint8 flags;
+    union // +4
+    {
+      uint32 disp32;
+      uint16 disp16;
+      uint8 disp8;
+      uint32 imm2_32;
+      uint16 imm2_16;
+      uint8 imm2_8;
+    };
+
+    OperandSize operand_size; // +8
+    AddressSize address_size; // +9
+    Segment segment;          // +10
+    union                     // +11
+    {
+      BitField<uint8, uint8, 0, 3> modrm_rm;
+      BitField<uint8, uint8, 3, 3> modrm_reg;
+      BitField<uint8, uint8, 6, 2> modrm_mod;
+      uint8 modrm;
+    };
+    union // +12
+    {
+      BitField<uint8, Reg32, 0, 3> sib_base_reg;
+      BitField<uint8, Reg32, 3, 3> sib_index_reg;
+      BitField<uint8, uint8, 6, 2> sib_scaling_factor;
+      uint8 sib;
+    };
+    union // +13
+    {
+      struct
+      {
+        uint8 modrm_rm_register : 1;
+        uint8 has_segment_override : 1;
+        uint8 has_rep : 1;
+        uint8 has_repne : 1;
+        uint8 has_lock : 1;
+        uint8 : 3;
+      };
+      uint8 flags;
+    };
   };
+  u64 bits64[2];
 
   // total size: 16 bytes (2 padding)
 

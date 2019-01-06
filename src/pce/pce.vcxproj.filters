@@ -185,6 +185,12 @@
     <ClCompile Include="cpu_x86\recompiler_code_generator.cpp">
       <Filter>cpu_x86</Filter>
     </ClCompile>
+    <ClCompile Include="cpu_x86\recompiler_code_generator_x64.cpp">
+      <Filter>cpu_x86</Filter>
+    </ClCompile>
+    <ClCompile Include="cpu_x86\recompiler_code_generator_x64.dasc.cpp">
+      <Filter>cpu_x86</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="system.h" />
