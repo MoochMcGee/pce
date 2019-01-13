@@ -10,17 +10,6 @@ namespace CPU_X86 {
 class CodeCacheBackend : public Backend
 {
 public:
-  CodeCacheBackend(CPU* cpu);
-  ~CodeCacheBackend();
-
-  virtual void Reset() override;
-  virtual void OnControlRegisterLoaded(Reg32 reg, uint32 old_value, uint32 new_value) override;
-  virtual void BranchTo(uint32 new_EIP) override;
-  virtual void BranchFromException(uint32 new_EIP) override;
-
-  virtual void FlushCodeCache() override;
-
-protected:
   struct BlockKey
   {
     union
@@ -93,6 +82,18 @@ protected:
   static bool CanInstructionFault(const Instruction* instruction);
   static bool OperandIsESP(const Instruction* instruction, const Instruction::Operand& operand);
 
+public:
+  CodeCacheBackend(CPU* cpu);
+  ~CodeCacheBackend();
+
+  virtual void Reset() override;
+  virtual void OnControlRegisterLoaded(Reg32 reg, uint32 old_value, uint32 new_value) override;
+  virtual void BranchTo(uint32 new_EIP) override;
+  virtual void BranchFromException(uint32 new_EIP) override;
+
+  virtual void FlushCodeCache() override;
+
+protected:
   /// Allocates storage for a block.
   virtual BlockBase* AllocateBlock(const BlockKey key) = 0;
 

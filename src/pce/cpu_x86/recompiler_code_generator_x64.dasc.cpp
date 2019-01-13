@@ -120,13 +120,43 @@
 
 | .type CPU, CPU, RCPUPTR
 
-namespace CPU_X86 {
+namespace CPU_X86::Recompiler {
 
 #define Dst &(m_dasm_state)
 
-void RecompilerCodeGenerator::StartInstruction(const Instruction* instruction)
+void CodeGenerator::InitHostRegs()
 {
-  if (!CanInstructionFault(instruction))
+
+}
+
+void CodeGenerator::BeginBlock()
+{
+  // TODO: Only push these if they're actually used..
+  | .if ABI_WIN64
+  | push rbx
+  | push r12
+  | push r13
+  | push r14
+  | push rsi
+  | sub rsp, 0x20
+  | .endif
+}
+
+void CodeGenerator::EndBlock()
+{
+  | .if ABI_WIN64
+  | add rsp, 0x20
+  | pop rsi
+  | pop r14
+  | pop r13
+  | pop r12
+  | pop rbx
+  | .endif
+}
+
+void CodeGenerator::StartInstruction(const Instruction* instruction)
+{
+  if (!CodeCacheBackend::CanInstructionFault(instruction))
   {
     // Defer updates for non-faulting instructions.
     m_delayed_eip_add += instruction->length;
@@ -173,7 +203,7 @@ void RecompilerCodeGenerator::StartInstruction(const Instruction* instruction)
   m_delayed_cycles_add = 0;
 }
 
-bool RecompilerCodeGenerator::Compile_Fallback(const Instruction* instruction)
+bool CodeGenerator::Compile_Fallback(const Instruction* instruction)
 {
   Interpreter::HandlerFunction interpreter_handler = Interpreter::GetInterpreterHandlerForInstruction(instruction);
   if (!interpreter_handler)
@@ -194,6 +224,12 @@ bool RecompilerCodeGenerator::Compile_Fallback(const Instruction* instruction)
   EndInstruction(instruction);
 }
 
+void CodeGenerator::Compile_MOV(const Instruction* instruction)
+{
+  // TODO: Get cycles
+  Value value = ReadOperand(instruction, 1, instruction->operands[0].size, false);
+  WriteOperand(instruction, 0, std::move(value));
+}
 
 
-}   // namespace CPU_X86
+}   // namespace CPU_X86::Recompiler

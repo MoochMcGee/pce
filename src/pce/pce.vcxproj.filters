@@ -188,9 +188,6 @@
     <ClCompile Include="cpu_x86\recompiler_code_generator_x64.cpp">
       <Filter>cpu_x86</Filter>
     </ClCompile>
-    <ClCompile Include="cpu_x86\recompiler_code_generator_x64.dasc.cpp">
-      <Filter>cpu_x86</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="system.h" />
@@ -412,6 +409,9 @@
     <ClInclude Include="cpu_x86\recompiler_code_generator.h">
       <Filter>cpu_x86</Filter>
     </ClInclude>
+    <ClInclude Include="cpu_x86\recompiler_types.h">
+      <Filter>cpu_x86</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="hw">
@@ -465,5 +465,10 @@
     <None Include="cpu_8086\decoder_tables.inl">
       <Filter>cpu_8086</Filter>
     </None>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="cpu_x86\recompiler_code_generator_x64.dasc.cpp">
+      <Filter>cpu_x86</Filter>
+    </CustomBuild>
   </ItemGroup>
 </Project>

@@ -3,10 +3,9 @@
 #include "YBaseLib/Log.h"
 #include "debugger_interface.h"
 #include "interpreter.h"
-#include "xbyak.h"
-Log_SetChannel(CPUX86::Interpreter);
+Log_SetChannel(CPU_X86::Recompiler);
 
-namespace CPU_X86 {
+namespace CPU_X86::Recompiler {
 
 // TODO:
 // Constant operands - don't move to a temporary register first
@@ -15,78 +14,668 @@ namespace CPU_X86 {
 // Push functions per stack address mode
 // Only sync EIP on potentially-faulting instructions
 // Lazy flag calculation - store operands and opcode
+// TODO: Block leaking on invalidation
+// TODO: Remove physical references when block is destroyed
+// TODO: block linking
+// TODO: memcpy-like stuff from bus for validation
 
-// void JitX64Backend::Block::AllocCode(size_t size)
-// {
-//     code_size = size;
-//     code_pointer = reinterpret_cast<CodePointer>(Xbyak::AlignedMalloc(code_size, 4096));
-//     if (!code_pointer)
-//         Panic("Failed to allocate code pointer");
-//
-//     if (!Xbyak::CodeArray::protect(reinterpret_cast<void*>(code_pointer), code_size, true))
-//         Panic("Failed to protect code pointer");
-// }
-
-RecompilerBackend::Block::Block(const BlockKey key) : BlockBase(key) {}
-
-RecompilerBackend::Block::~Block()
+CodeGenerator::CodeGenerator(Backend* backend, Block* block)
+  : m_backend(backend), m_block(block), m_block_start(block->instructions.data()),
+    m_block_end(block->instructions.data() + block->instructions.size())
 {
-  //     if (code_pointer)
-  //         Xbyak::AlignedFree(reinterpret_cast<void*>(code_pointer));
 }
 
-RecompilerCodeGenerator::RecompilerCodeGenerator(RecompilerBackend* backend, void* code_ptr, size_t code_size)
-  : Xbyak::CodeGenerator(code_size, code_ptr), m_backend(backend), m_cpu(backend->m_cpu)
-#if ABI_WIN64
-    ,
-    RTEMP8A(al), RTEMP8B(cl), RTEMP8C(dl), RTEMP16A(ax), RTEMP16B(cx), RTEMP16C(dx), RTEMP32A(eax), RTEMP32B(ecx),
-    RTEMP32C(edx), RTEMP64A(rax), RTEMP64B(rcx), RTEMP64C(rdx), RTEMPADDR(r8), RSTORE8A(bl), RSTORE8B(r12b),
-    RSTORE8C(r13b), RSTORE16A(bx), RSTORE16B(r12w), RSTORE16C(r13w), RSTORE32A(ebx), RSTORE32B(r12d), RSTORE32C(r13d),
-    RSTORE64A(rbx), RSTORE64B(r12), RSTORE64C(r13), READDR16(r14w), READDR32(r14d), READDR64(r14), RCPUPTR(rsi),
-    RSCRATCH64(r11), RSCRATCH32(r11d), RSCRATCH16(r11w), RSCRATCH8(r11b), RPARAM1_8(cl), RPARAM2_8(dl), RPARAM3_8(r8b),
-    RPARAM4_8(r9b), RRET_8(al), RPARAM1_16(cx), RPARAM2_16(dx), RPARAM3_16(r8w), RPARAM4_16(r9w), RRET_16(ax),
-    RPARAM1_32(ecx), RPARAM2_32(edx), RPARAM3_32(r8d), RPARAM4_32(r9d), RRET_32(eax), RPARAM1_64(rcx), RPARAM2_64(rdx),
-    RPARAM3_64(r8), RPARAM4_64(r9), RRET_64(rax)
-#elif ABI_SYSV
-    ,
-    RTEMP8A(al), RTEMP8B(cl), RTEMP8C(dl), RTEMP16A(ax), RTEMP16B(cx), RTEMP16C(dx), RTEMP32A(eax), RTEMP32B(ecx),
-    RTEMP32C(edx), RTEMP64A(rax), RTEMP64B(rcx), RTEMP64C(rdx), RTEMPADDR(r8), RSTORE8A(bl), RSTORE8B(r12b),
-    RSTORE8C(r13b), RSTORE16A(bx), RSTORE16B(r12w), RSTORE16C(r13w), RSTORE32A(ebx), RSTORE32B(r12d), RSTORE32C(r13d),
-    RSTORE64A(rbx), RSTORE64B(r12), RSTORE64C(r13), READDR16(r14w), READDR32(r14d), READDR64(r14), RCPUPTR(rbp),
-    RSCRATCH64(r11), RSCRATCH32(r11d), RSCRATCH16(r11w), RSCRATCH8(r11b), RPARAM1_8(dil), RPARAM2_8(sil), RPARAM3_8(dl),
-    RPARAM4_8(cl), RRET_8(al), RPARAM1_16(di), RPARAM2_16(si), RPARAM3_16(dx), RPARAM4_16(cx), RRET_16(ax),
-    RPARAM1_32(edi), RPARAM2_32(esi), RPARAM3_32(edx), RPARAM4_32(ecx), RRET_32(eax), RPARAM1_64(rdi), RPARAM2_64(rsi),
-    RPARAM3_64(rdx), RPARAM4_64(rcx), RRET_64(rax)
-#endif
+CodeGenerator::~CodeGenerator() {}
+
+void CodeGenerator::SetHostRegAllocationOrder(std::initializer_list<HostReg> regs)
 {
-  // Save nonvolatile registers
-  // TODO: Stash nops and a forward code pointer, skip for unneeded registers.
-  // NOTE: Should be aligned so that rsp+8h % 16 = 0
-  // TODO: Use sil? shorter?
-  push(RSTORE64A);
-  push(RSTORE64B);
-  push(RSTORE64C);
-  push(READDR64);
-  push(RCPUPTR);
-
-#if ABI_WIN64
-  // Only on Windows
-  sub(rsp, 0x20);
-#endif
-
-  // Load CPU pointer.
-  mov(RCPUPTR, RPARAM1_64);
-
-  // Update current EIP/ESP for exceptions.
-  mov(RTEMP32A, dword[RCPUPTR + offsetof(CPU, m_registers.EIP)]);
-  mov(RTEMP32B, dword[RCPUPTR + offsetof(CPU, m_registers.ESP)]);
-  mov(dword[RCPUPTR + offsetof(CPU, m_current_EIP)], RTEMP32A);
-  mov(dword[RCPUPTR + offsetof(CPU, m_current_ESP)], RTEMP32B);
+  size_t index = 0;
+  for (HostReg reg : regs)
+  {
+    m_host_registers[reg].state = HostRegState::Free | HostRegState::UsableInRegisterCache;
+    m_host_register_allocation_order[index++] = reg;
+  }
+  m_host_register_available_count = static_cast<u32>(index);
 }
 
-RecompilerCodeGenerator::~RecompilerCodeGenerator() {}
+void CodeGenerator::SetCallerSavedHostRegs(std::initializer_list<HostReg> regs)
+{
+  for (HostReg reg : regs)
+    m_host_registers[reg].state |= HostRegState::CallerSaved;
+}
 
-std::pair<const void*, size_t> RecompilerCodeGenerator::FinishBlock()
+bool CodeGenerator::IsCacheableHostRegister(HostReg reg) const
+{
+  return (m_host_registers[reg].state & HostRegState::UsableInRegisterCache) != HostRegState::None;
+}
+
+HostReg CodeGenerator::AllocateHostReg(OperandSize size, HostRegState state /* = HostRegState::InUse */)
+{
+  // try for a free register in allocation order
+  for (u32 i = 0; i < m_host_register_available_count; i++)
+  {
+    const HostReg reg = m_host_register_allocation_order[i];
+    if ((m_host_registers[reg].state & HostRegState::Free) != HostRegState::None)
+    {
+      m_host_registers[reg].state = (m_host_registers[reg].state & ~(HostRegState::Free)) | state;
+      m_host_registers[reg].size = size;
+      return reg;
+    }
+  }
+
+  // evict one of the cached guest registers
+  HostReg reg = EvictOneGuestRegister();
+  if (reg >= HostReg_Count)
+    Panic("Failed to evict guest register for new allocation");
+
+  m_host_registers[reg].state = (m_host_registers[reg].state & ~(HostRegState::Free)) | state;
+  m_host_registers[reg].size = size;
+  return reg;
+}
+
+Value CodeGenerator::AllocateTemporaryHostReg(OperandSize size)
+{
+  HostReg reg = AllocateHostReg(size);
+  return Value::FromTemporary(reg, size);
+}
+
+void CodeGenerator::FreeHostReg(HostReg reg)
+{
+  m_host_registers[reg].state = (m_host_registers[reg].state & ~(HostRegState::CallerSaved)) | HostRegState::Free;
+}
+
+void CodeGenerator::ReleaseValue(Value& value)
+{
+  if (value.IsTemporary())
+    FreeHostReg(value.host_reg);
+  value.Clear();
+}
+
+void CodeGenerator::ConvertValueSize(Value& value, OperandSize size, bool sign_extend)
+{
+  // We should only be going up in size, not down..
+  DebugAssert(size > value.size);
+
+  if (value.IsConstant())
+  {
+    // compile-time conversion, woo!
+    switch (size)
+    {
+      case OperandSize_8:
+      {
+        value.constant_value &= 0xFF;
+      }
+      break;
+
+      case OperandSize_16:
+      {
+        switch (value.size)
+        {
+          case OperandSize_8:
+            value.constant_value = sign_extend ? ZeroExtend32(SignExtend16(static_cast<u8>(value.constant_value))) :
+                                                 ZeroExtend32(static_cast<u8>(value.constant_value));
+            break;
+          default:
+            value.constant_value &= 0xFFFF;
+            break;
+        }
+      }
+      break;
+
+      case OperandSize_32:
+      {
+        switch (value.size)
+        {
+          case OperandSize_8:
+            value.constant_value = sign_extend ? SignExtend32(static_cast<u8>(value.constant_value)) :
+                                                 ZeroExtend32(static_cast<u8>(value.constant_value));
+            break;
+          case OperandSize_16:
+            value.constant_value = sign_extend ? SignExtend32(static_cast<u16>(value.constant_value)) :
+                                                 ZeroExtend32(static_cast<u16>(value.constant_value));
+            break;
+          default:
+            break;
+        }
+      }
+      break;
+
+      default:
+        break;
+    }
+
+    value.size = size;
+    return;
+  }
+
+  // if it's not in a temporary, we don't want to mess up the regcache value.. so we need a temporary.
+  if (!value.IsTemporary())
+  {
+    HostReg reg = AllocateHostReg(value.size);
+    EmitSignExtend(reg, size, value.host_reg, value.size);
+    value = Value::FromTemporary(reg, size);
+  }
+  else
+  {
+    // otherwise, we can just adjust the value
+    EmitSignExtend(value.host_reg, size, value.host_reg, value.size);
+    value.size = size;
+  }
+}
+
+void CodeGenerator::FlushOverlappingGuestRegisters(Reg8 guest_reg)
+{
+  switch (guest_reg)
+  {
+    case Reg8_AL:
+    case Reg8_AH:
+      FlushGuestRegister(Reg16_AX, true);
+      FlushGuestRegister(Reg32_EAX, true);
+      break;
+    case Reg8_CL:
+    case Reg8_CH:
+      FlushGuestRegister(Reg16_CX, true);
+      FlushGuestRegister(Reg32_ECX, true);
+      break;
+    case Reg8_BL:
+    case Reg8_BH:
+      FlushGuestRegister(Reg16_BX, true);
+      FlushGuestRegister(Reg32_EBX, true);
+      break;
+    case Reg8_DL:
+    case Reg8_DH:
+      FlushGuestRegister(Reg16_DX, true);
+      FlushGuestRegister(Reg32_EDX, true);
+      break;
+    default:
+      break;
+  }
+}
+
+void CodeGenerator::FlushOverlappingGuestRegisters(Reg16 guest_reg)
+{
+  switch (guest_reg)
+  {
+    case Reg16_AX:
+      FlushGuestRegister(Reg8_AL, true);
+      FlushGuestRegister(Reg8_AH, true);
+      FlushGuestRegister(Reg32_EAX, true);
+      break;
+    case Reg16_BX:
+      FlushGuestRegister(Reg8_BL, true);
+      FlushGuestRegister(Reg8_BH, true);
+      FlushGuestRegister(Reg32_EBX, true);
+      break;
+    case Reg16_CX:
+      FlushGuestRegister(Reg8_CL, true);
+      FlushGuestRegister(Reg8_CH, true);
+      FlushGuestRegister(Reg16_CX, true);
+      FlushGuestRegister(Reg32_ECX, true);
+      break;
+    case Reg16_DX:
+      FlushGuestRegister(Reg8_DL, true);
+      FlushGuestRegister(Reg8_DH, true);
+      FlushGuestRegister(Reg16_DX, true);
+      FlushGuestRegister(Reg32_EDX, true);
+      break;
+    case Reg16_SP:
+      FlushGuestRegister(Reg32_ESP, true);
+      break;
+    case Reg16_BP:
+      FlushGuestRegister(Reg32_EBP, true);
+      break;
+    case Reg16_SI:
+      FlushGuestRegister(Reg32_ESI, true);
+      break;
+    case Reg16_DI:
+      FlushGuestRegister(Reg32_EDI, true);
+      break;
+    default:
+      break;
+  }
+}
+
+void CodeGenerator::FlushOverlappingGuestRegisters(Reg32 guest_reg)
+{
+  switch (guest_reg)
+  {
+    case Reg32_EAX:
+      FlushGuestRegister(Reg8_AL, true);
+      FlushGuestRegister(Reg8_AH, true);
+      FlushGuestRegister(Reg16_AX, true);
+      break;
+    case Reg32_EBX:
+      FlushGuestRegister(Reg8_BL, true);
+      FlushGuestRegister(Reg8_BH, true);
+      FlushGuestRegister(Reg16_BX, true);
+      break;
+    case Reg32_ECX:
+      FlushGuestRegister(Reg8_CL, true);
+      FlushGuestRegister(Reg8_CH, true);
+      FlushGuestRegister(Reg16_CX, true);
+      FlushGuestRegister(Reg32_ECX, true);
+      break;
+    case Reg32_EDX:
+      FlushGuestRegister(Reg8_DL, true);
+      FlushGuestRegister(Reg8_DH, true);
+      FlushGuestRegister(Reg16_DX, true);
+      FlushGuestRegister(Reg32_EDX, true);
+      break;
+    case Reg32_ESP:
+      FlushGuestRegister(Reg32_ESP, true);
+      break;
+    case Reg32_EBP:
+      FlushGuestRegister(Reg32_EBP, true);
+      break;
+    case Reg32_ESI:
+      FlushGuestRegister(Reg32_ESI, true);
+      break;
+    case Reg32_EDI:
+      FlushGuestRegister(Reg32_EDI, true);
+      break;
+    default:
+      break;
+  }
+}
+
+Value CodeGenerator::ReadGuestRegister(Reg8 guest_reg, bool cache /* = true */)
+{
+  if (m_guest_reg8_state[guest_reg].IsCached())
+    return m_guest_reg8_state[guest_reg].ToValue(OperandSize_8);
+
+  FlushOverlappingGuestRegisters(guest_reg);
+
+  const HostReg host_reg = AllocateHostReg(OperandSize_8);
+  EmitLoadGuestRegister(host_reg, OperandSize_8, guest_reg);
+
+  // Now in cache.
+  if (cache)
+  {
+    m_guest_reg8_state[guest_reg].SetHostReg(host_reg);
+    return Value::FromHostReg(host_reg, OperandSize_8);
+  }
+  else
+  {
+    return Value::FromTemporary(host_reg, OperandSize_8);
+  }
+}
+
+Value CodeGenerator::ReadGuestRegister(Reg16 guest_reg, bool cache /* = true */)
+{
+  if (m_guest_reg16_state[guest_reg].IsCached())
+    return m_guest_reg16_state[guest_reg].ToValue(OperandSize_16);
+
+  FlushOverlappingGuestRegisters(guest_reg);
+
+  const HostReg host_reg = AllocateHostReg(OperandSize_16);
+  EmitLoadGuestRegister(host_reg, OperandSize_16, guest_reg);
+
+  // Now in cache.
+  if (cache)
+  {
+    m_guest_reg16_state[guest_reg].SetHostReg(host_reg);
+    return Value::FromHostReg(host_reg, OperandSize_16);
+  }
+  else
+  {
+    return Value::FromTemporary(host_reg, OperandSize_16);
+  }
+}
+
+Value CodeGenerator::ReadGuestRegister(Reg32 guest_reg, bool cache /* = true */)
+{
+  if (m_guest_reg32_state[guest_reg].IsCached())
+    return m_guest_reg32_state[guest_reg].ToValue(OperandSize_32);
+
+  FlushOverlappingGuestRegisters(guest_reg);
+
+  const HostReg host_reg = AllocateHostReg(OperandSize_32);
+  EmitLoadGuestRegister(host_reg, OperandSize_32, guest_reg);
+
+  // Now in cache.
+  if (cache)
+  {
+    m_guest_reg32_state[guest_reg].SetHostReg(host_reg);
+    return Value::FromHostReg(host_reg, OperandSize_32);
+  }
+  else
+  {
+    return Value::FromTemporary(host_reg, OperandSize_32);
+  }
+}
+
+void CodeGenerator::WriteGuestRegister(Reg8 guest_reg, Value&& value)
+{
+  FlushOverlappingGuestRegisters(guest_reg);
+  InvalidateGuestRegister(guest_reg);
+
+  GuestRegData& guest_reg_state = m_guest_reg8_state[guest_reg];
+  if (value.IsConstant())
+  {
+    // No need to allocate a host register, and we can defer the store.
+    guest_reg_state.SetConstant(value.constant_value);
+    guest_reg_state.SetDirty();
+    return;
+  }
+
+  // If it's a temporary, we can bind that to the guest register.
+  if (value.IsTemporary() && IsCacheableHostRegister(value.host_reg))
+  {
+    guest_reg_state.SetHostReg(value.host_reg);
+    guest_reg_state.SetDirty();
+    value.Clear();
+    return;
+  }
+
+  // Allocate host register, and copy value to it.
+  HostReg host_reg = AllocateHostReg(OperandSize_8);
+  EmitCopyValue(host_reg, value);
+  guest_reg_state.SetHostReg(host_reg);
+  ReleaseValue(value);
+}
+
+void CodeGenerator::WriteGuestRegister(Reg16 guest_reg, Value&& value)
+{
+  FlushOverlappingGuestRegisters(guest_reg);
+  InvalidateGuestRegister(guest_reg);
+
+  GuestRegData& guest_reg_state = m_guest_reg16_state[guest_reg];
+  if (value.IsConstant())
+  {
+    // No need to allocate a host register, and we can defer the store.
+    guest_reg_state.SetConstant(value.constant_value);
+    guest_reg_state.SetDirty();
+    return;
+  }
+
+  // If it's a temporary, we can bind that to the guest register.
+  if (value.IsTemporary() && IsCacheableHostRegister(value.host_reg))
+  {
+    guest_reg_state.SetHostReg(value.host_reg);
+    guest_reg_state.SetDirty();
+    value.Clear();
+    return;
+  }
+
+  // Allocate host register, and copy value to it.
+  HostReg host_reg = AllocateHostReg(OperandSize_16);
+  EmitCopyValue(host_reg, value);
+  guest_reg_state.SetHostReg(host_reg);
+  ReleaseValue(value);
+}
+
+void CodeGenerator::WriteGuestRegister(Reg32 guest_reg, Value&& value)
+{
+  FlushOverlappingGuestRegisters(guest_reg);
+  InvalidateGuestRegister(guest_reg);
+
+  GuestRegData& guest_reg_state = m_guest_reg32_state[guest_reg];
+  if (value.IsConstant())
+  {
+    // No need to allocate a host register, and we can defer the store.
+    guest_reg_state.SetConstant(value.constant_value);
+    guest_reg_state.SetDirty();
+    return;
+  }
+
+  // If it's a temporary, we can bind that to the guest register.
+  if (value.IsTemporary() && IsCacheableHostRegister(value.host_reg))
+  {
+    guest_reg_state.SetHostReg(value.host_reg);
+    guest_reg_state.SetDirty();
+    value.Clear();
+    return;
+  }
+
+  // Allocate host register, and copy value to it.
+  HostReg host_reg = AllocateHostReg(OperandSize_32);
+  EmitCopyValue(host_reg, value);
+  guest_reg_state.SetHostReg(host_reg);
+  ReleaseValue(value);
+}
+
+void CodeGenerator::FlushGuestRegister(Reg8 guest_reg, bool invalidate)
+{
+  if (!m_guest_reg8_state[guest_reg].IsDirty())
+    EmitStoreGuestRegister(OperandSize_8, guest_reg);
+
+  if (invalidate)
+    InvalidateGuestRegister(guest_reg);
+}
+
+void CodeGenerator::InvalidateGuestRegister(Reg8 guest_reg)
+{
+  if (m_guest_reg32_state[guest_reg].IsInHostRegister())
+    FreeHostReg(m_guest_reg32_state[guest_reg].host_reg);
+
+  m_guest_reg8_state[guest_reg].Invalidate();
+}
+
+void CodeGenerator::FlushGuestRegister(Reg16 guest_reg, bool invalidate)
+{
+  if (m_guest_reg16_state[guest_reg].IsDirty())
+    EmitStoreGuestRegister(OperandSize_16, guest_reg);
+
+  if (invalidate)
+    InvalidateGuestRegister(guest_reg);
+}
+
+void CodeGenerator::InvalidateGuestRegister(Reg16 guest_reg)
+{
+  if (m_guest_reg16_state[guest_reg].IsInHostRegister())
+    FreeHostReg(m_guest_reg16_state[guest_reg].host_reg);
+
+  m_guest_reg16_state[guest_reg].Invalidate();
+}
+
+void CodeGenerator::FlushGuestRegister(Reg32 guest_reg, bool invalidate)
+{
+  if (m_guest_reg32_state[guest_reg].IsDirty())
+    EmitStoreGuestRegister(OperandSize_32, guest_reg);
+
+  if (invalidate)
+    InvalidateGuestRegister(guest_reg);
+}
+
+void CodeGenerator::InvalidateGuestRegister(Reg32 guest_reg)
+{
+  if (m_guest_reg32_state[guest_reg].IsInHostRegister())
+    FreeHostReg(m_guest_reg32_state[guest_reg].host_reg);
+
+  m_guest_reg32_state[guest_reg].Invalidate();
+}
+
+Value CodeGenerator::ReadOperand(const Instruction* instruction, size_t index, OperandSize output_size,
+                                 bool sign_extend)
+{
+  const Instruction::Operand* operand = &instruction->operands[index];
+
+  auto MakeRegisterAccess = [&](uint32 reg) -> Value {
+    switch (operand->size)
+    {
+      case OperandSize_8:
+      {
+        Value val = ReadGuestRegister(static_cast<Reg8>(reg));
+        if (output_size != OperandSize_8)
+          ConvertValueSize(val, output_size, sign_extend);
+
+        return val;
+      }
+
+      case OperandSize_16:
+      {
+        Value val = ReadGuestRegister(static_cast<Reg16>(reg));
+        if (output_size != OperandSize_16)
+          ConvertValueSize(val, output_size, sign_extend);
+
+        return val;
+      }
+
+      case OperandSize_32:
+      {
+        Value val = ReadGuestRegister(static_cast<Reg32>(reg));
+        if (output_size != OperandSize_32)
+          ConvertValueSize(val, output_size, sign_extend);
+
+        return val;
+      }
+
+      default:
+        Panic("Unhandled register size.");
+        return Value{};
+    }
+  };
+
+  switch (operand->mode)
+  {
+    case OperandMode_Immediate:
+    {
+      switch (output_size)
+      {
+        case OperandSize_8:
+          DebugAssert(operand->size == OperandSize_8);
+          return Value::FromConstantU8(instruction->data.imm8);
+
+        case OperandSize_16:
+        {
+          switch (operand->size)
+          {
+            case OperandSize_8:
+              return Value::FromConstantU16(sign_extend ? SignExtend32(instruction->data.imm8) :
+                                                          ZeroExtend32(instruction->data.imm8));
+
+            default:
+              return Value::FromConstantU16(ZeroExtend32(instruction->data.imm16));
+          }
+        }
+        break;
+        case OperandSize_32:
+        {
+          switch (operand->size)
+          {
+            case OperandSize_8:
+              return Value::FromConstantU32(sign_extend ? SignExtend32(instruction->data.imm8) :
+                                                          ZeroExtend32(instruction->data.imm8));
+
+            case OperandSize_16:
+              return Value::FromConstantU32(sign_extend ? SignExtend32(instruction->data.imm16) :
+                                                          ZeroExtend32(instruction->data.imm16));
+
+            default:
+              return Value::FromConstantU32(ZeroExtend32(instruction->data.imm32));
+          }
+        }
+        break;
+      }
+    }
+    break;
+
+    case OperandMode_Register:
+      return MakeRegisterAccess(operand->reg32);
+
+    case OperandMode_SegmentRegister:
+    {
+      // slow path for this for now..
+      HostReg reg = AllocateHostReg(OperandSize_16);
+      EmitLoadCPUStructField(reg, OperandSize_16, CalculateSegmentRegisterOffset(operand->segreg));
+      if (output_size == OperandSize_32)
+      {
+        // Segment registers are sign-extended on push/pop.
+        EmitSignExtend(reg, OperandSize_32, reg, OperandSize_16);
+      }
+
+      return Value::FromTemporary(reg, output_size);
+    }
+
+    case OperandMode_Memory:
+    case OperandMode_ModRM_RM:
+    {
+      if (operand->mode == OperandMode_ModRM_RM && instruction->ModRM_RM_IsReg())
+        return MakeRegisterAccess(instruction->data.modrm_rm_register);
+
+      // Memory loads can fault. Ditch all the cached registers so we don't need to push them.
+      // The effective address should remain..
+      FlushAllGuestRegisters(false);
+
+      // we get the result back in eax, which we can use as a temporary.
+      HostReg reg =
+        EmitLoadGuestMemory(operand->size, m_operand_memory_addresses[index], instruction->GetMemorySegment());
+      Value val = Value::FromTemporary(reg, operand->size);
+
+      // handle sign-extension
+      if (operand->size != output_size)
+        ConvertValueSize(val, output_size, sign_extend);
+
+      return val;
+    }
+
+    default:
+      break;
+  }
+
+  Panic("Unhandled address mode");
+  return Value{};
+}
+
+void CodeGenerator::WriteOperand(const Instruction* instruction, size_t index, Value&& value)
+{
+  const Instruction::Operand* operand = &instruction->operands[index];
+  switch (operand->mode)
+  {
+    case OperandMode_Register:
+    {
+      switch (operand->size)
+      {
+        case OperandSize_8:
+          WriteGuestRegister(operand->reg8, std::move(value));
+          return;
+        case OperandSize_16:
+          WriteGuestRegister(operand->reg16, std::move(value));
+          return;
+        case OperandSize_32:
+          WriteGuestRegister(operand->reg32, std::move(value));
+          return;
+        default:
+          break;
+      }
+    }
+    break;
+
+    case OperandMode_Memory:
+    case OperandMode_ModRM_RM:
+    {
+      if (operand->mode == OperandMode_ModRM_RM && instruction->ModRM_RM_IsReg())
+      {
+        switch (operand->size)
+        {
+          case OperandSize_8:
+            WriteGuestRegister(static_cast<Reg8>(instruction->data.modrm_rm_register), std::move(value));
+            break;
+          case OperandSize_16:
+            WriteGuestRegister(static_cast<Reg16>(instruction->data.modrm_rm_register), std::move(value));
+            break;
+          case OperandSize_32:
+            WriteGuestRegister(static_cast<Reg32>(instruction->data.modrm_rm_register), std::move(value));
+            break;
+          default:
+            break;
+        }
+        return;
+      }
+
+      // Memory writes can fault. Ditch all cached registers before continuing.
+      FlushAllGuestRegisters(false);
+      EmitStoreGuestMemory(value, m_operand_memory_addresses[index], instruction->GetMemorySegment());
+      return;
+    }
+  }
+
+  Panic("Unhandled operand mode");
+}
+
+
+
+std::pair<const void*, size_t> CodeGenerator::FinishBlock()
 {
   Assert(m_delayed_eip_add == 0 && m_delayed_cycles_add == 0);
 
@@ -109,7 +698,7 @@ std::pair<const void*, size_t> RecompilerCodeGenerator::FinishBlock()
   return std::make_pair(reinterpret_cast<const void*>(getCode()), getSize());
 }
 
-bool RecompilerCodeGenerator::CompileInstruction(const Instruction* instruction, bool is_final)
+bool CodeGenerator::CompileInstruction(const Instruction* instruction, bool is_final)
 {
   bool result;
   switch (instruction->operation)
@@ -187,10 +776,14 @@ bool RecompilerCodeGenerator::CompileInstruction(const Instruction* instruction,
   if (is_final)
     SyncInstructionPointers(instruction);
 
+  // release temporary effective addresses
+  for (Value& value : m_operand_memory_addresses)
+    ReleaseValue(value);
+
   return result;
 }
 
-uint32 RecompilerCodeGenerator::CalculateRegisterOffset(Reg8 reg)
+u32 CodeGenerator::CalculateRegisterOffset(Reg8 reg)
 {
   // Ugly but necessary due to the structure layout.
   switch (reg)
@@ -217,7 +810,7 @@ uint32 RecompilerCodeGenerator::CalculateRegisterOffset(Reg8 reg)
   }
 }
 
-uint32 RecompilerCodeGenerator::CalculateRegisterOffset(Reg16 reg)
+u32 CodeGenerator::CalculateRegisterOffset(Reg16 reg)
 {
   // Ugly but necessary due to the structure layout.
   switch (reg)
@@ -244,17 +837,17 @@ uint32 RecompilerCodeGenerator::CalculateRegisterOffset(Reg16 reg)
   }
 }
 
-uint32 RecompilerCodeGenerator::CalculateRegisterOffset(Reg32 reg)
+u32 CodeGenerator::CalculateRegisterOffset(Reg32 reg)
 {
   return uint32(offsetof(CPU, m_registers.reg32[0]) + (reg * sizeof(uint32)));
 }
 
-uint32 RecompilerCodeGenerator::CalculateSegmentRegisterOffset(Segment segment)
+u32 CodeGenerator::CalculateSegmentRegisterOffset(Segment segment)
 {
   return uint32(offsetof(CPU, m_registers.segment_selectors[0]) + (segment * sizeof(uint16)));
 }
 
-void RecompilerCodeGenerator::CalculateEffectiveAddress(const Instruction* instruction)
+void CodeGenerator::CalculateEffectiveAddress(const Instruction* instruction)
 {
 #if 0
   for (size_t i = 0; i < countof(instruction->operands); i++)
@@ -357,13 +950,13 @@ void RecompilerCodeGenerator::CalculateEffectiveAddress(const Instruction* instr
 #endif
 }
 
-bool RecompilerCodeGenerator::IsConstantOperand(const Instruction* instruction, size_t index)
+bool CodeGenerator::IsConstantOperand(const Instruction* instruction, size_t index)
 {
   const Instruction::Operand* operand = &instruction->operands[index];
   return (operand->mode == OperandMode_Immediate);
 }
 
-uint32 RecompilerCodeGenerator::GetConstantOperand(const Instruction* instruction, size_t index, bool sign_extend)
+uint32 CodeGenerator::GetConstantOperand(const Instruction* instruction, size_t index, bool sign_extend)
 {
   const Instruction::Operand* operand = &instruction->operands[index];
   DebugAssert(operand->mode == OperandMode_Immediate);
@@ -410,298 +1003,15 @@ static void WriteMemoryDWordTrampoline(CPU* cpu, uint32 segment, uint32 offset, 
   cpu->WriteMemoryDWord(static_cast<Segment>(segment), offset, value);
 }
 
-void RecompilerCodeGenerator::ReadOperand(const Instruction* instruction, size_t index, const Xbyak::Reg& dest,
-                                          bool sign_extend)
-{
-  const Instruction::Operand* operand = &instruction->operands[index];
-  OperandSize output_size;
-  if (dest.isBit(8))
-    output_size = OperandSize_8;
-  else if (dest.isBit(16))
-    output_size = OperandSize_16;
-  else
-    output_size = OperandSize_32;
-
-  auto MakeRegisterAccess = [&](uint32 reg) {
-    switch (output_size)
-    {
-      case OperandSize_8:
-        mov(dest, byte[RCPUPTR + CalculateRegisterOffset(Reg8(reg))]);
-        break;
-
-      case OperandSize_16:
-      {
-        switch (operand->size)
-        {
-          case OperandSize_8:
-          {
-            if (sign_extend)
-              movsx(dest, byte[RCPUPTR + CalculateRegisterOffset(Reg8(reg))]);
-            else
-              movzx(dest, byte[RCPUPTR + CalculateRegisterOffset(Reg8(reg))]);
-          }
-          break;
-          case OperandSize_16:
-          case OperandSize_32:
-            mov(dest, word[RCPUPTR + CalculateRegisterOffset(Reg16(reg))]);
-            break;
-        }
-      }
-      break;
-
-      case OperandSize_32:
-      {
-        switch (operand->size)
-        {
-          case OperandSize_8:
-          {
-            if (sign_extend)
-              movsx(dest, byte[RCPUPTR + CalculateRegisterOffset(Reg8(reg))]);
-            else
-              movzx(dest, byte[RCPUPTR + CalculateRegisterOffset(Reg8(reg))]);
-          }
-          break;
-          case OperandSize_16:
-          {
-            if (sign_extend)
-              movsx(dest, word[RCPUPTR + CalculateRegisterOffset(Reg16(reg))]);
-            else
-              movzx(dest, word[RCPUPTR + CalculateRegisterOffset(Reg16(reg))]);
-          }
-          break;
-          case OperandSize_32:
-            mov(dest, dword[RCPUPTR + CalculateRegisterOffset(Reg32(reg))]);
-            break;
-        }
-      }
-      break;
-    }
-  };
-
-  switch (operand->mode)
-  {
-    case OperandMode_Immediate:
-    {
-      switch (output_size)
-      {
-        case OperandSize_8:
-          mov(dest, ZeroExtend32(instruction->data.imm8));
-          break;
-        case OperandSize_16:
-        {
-          switch (operand->size)
-          {
-            case OperandSize_8:
-              mov(dest, sign_extend ? SignExtend32(instruction->data.imm8) : ZeroExtend32(instruction->data.imm8));
-              break;
-            default:
-              mov(dest, ZeroExtend32(instruction->data.imm16));
-              break;
-          }
-        }
-        break;
-        case OperandSize_32:
-        {
-          switch (operand->size)
-          {
-            case OperandSize_8:
-              mov(dest, sign_extend ? SignExtend32(instruction->data.imm8) : ZeroExtend32(instruction->data.imm8));
-              break;
-            case OperandSize_16:
-              mov(dest, sign_extend ? SignExtend32(instruction->data.imm16) : ZeroExtend32(instruction->data.imm16));
-              break;
-            default:
-              mov(dest, ZeroExtend32(instruction->data.imm32));
-              break;
-          }
-        }
-        break;
-      }
-    }
-    break;
-
-    case OperandMode_Register:
-      MakeRegisterAccess(operand->reg32);
-      break;
-
-    case OperandMode_SegmentRegister:
-    {
-      switch (output_size)
-      {
-        case OperandSize_16:
-          mov(dest, word[RCPUPTR + CalculateSegmentRegisterOffset(operand->segreg)]);
-          break;
-        case OperandSize_32:
-          // Segment registers are sign-extended on push/pop.
-          movsx(dest, word[RCPUPTR + CalculateSegmentRegisterOffset(operand->segreg)]);
-          break;
-      }
-    }
-    break;
-
-    case OperandMode_Memory:
-    case OperandMode_ModRM_RM:
-    {
-      if (operand->mode == OperandMode_ModRM_RM && instruction->ModRM_RM_IsReg())
-      {
-        MakeRegisterAccess(instruction->data.modrm_rm_register);
-        break;
-      }
-
-      mov(RPARAM1_64, RCPUPTR);
-      mov(RPARAM2_32, uint32(instruction->GetMemorySegment()));
-      if (operand->mode == OperandMode_Memory)
-        mov(RPARAM3_32, instruction->data.disp32);
-      else
-        mov(RPARAM3_32, READDR32);
-
-      switch (operand->size)
-      {
-        case OperandSize_8:
-          CallModuleFunction(ReadMemoryByteTrampoline);
-          break;
-        case OperandSize_16:
-          CallModuleFunction(ReadMemoryWordTrampoline);
-          break;
-        case OperandSize_32:
-          CallModuleFunction(ReadMemoryDWordTrampoline);
-          break;
-      }
-
-      switch (output_size)
-      {
-        case OperandSize_8:
-          mov(dest, RRET_8);
-          break;
-        case OperandSize_16:
-        {
-          switch (operand->size)
-          {
-            case OperandSize_8:
-            {
-              if (sign_extend)
-                movsx(dest, RRET_8);
-              else
-                movzx(dest, RRET_8);
-            }
-            break;
-            case OperandSize_16:
-            case OperandSize_32:
-              mov(dest, RRET_16);
-              break;
-          }
-        }
-        break;
-        case OperandSize_32:
-        {
-          switch (operand->size)
-          {
-            case OperandSize_8:
-            {
-              if (sign_extend)
-                movsx(dest, RRET_8);
-              else
-                movzx(dest, RRET_8);
-            }
-            break;
-            case OperandSize_16:
-            {
-              if (sign_extend)
-                movsx(dest, RRET_16);
-              else
-                movzx(dest, RRET_16);
-            }
-            break;
-            case OperandSize_32:
-              mov(dest, RRET_32);
-              break;
-          }
-        }
-        break;
-      }
-    }
-    break;
-
-    default:
-      Panic("Unhandled address mode");
-      break;
-  }
-}
-
-void RecompilerCodeGenerator::WriteOperand(const Instruction* instruction, size_t index, const Xbyak::Reg& src)
+void CodeGenerator::WriteOperand(const Instruction* instruction, size_t index, const Xbyak::Reg& src)
 {
 #if 0
-  const Instruction::Operand* operand = &instruction->operands[index];
-  switch (operand->mode)
-  {
-    case AddressingMode_Register:
-    {
-      switch (operand->size)
-      {
-        case OperandSize_8:
-          mov(byte[RCPUPTR + CalculateRegisterOffset(operand->reg.reg8)], src);
-          break;
-        case OperandSize_16:
-          mov(word[RCPUPTR + CalculateRegisterOffset(operand->reg.reg16)], src);
-          break;
-        case OperandSize_32:
-          mov(dword[RCPUPTR + CalculateRegisterOffset(operand->reg.reg32)], src);
-          break;
-      }
-    }
-    break;
 
-    case AddressingMode_SegmentRegister:
-    {
-      // Truncate higher lengths to 16-bits.
-      mov(RPARAM1_64, RCPUPTR);
-      mov(RPARAM2_32, uint32(instruction->operands[0].reg.sreg));
-      movzx(RPARAM3_32, (src.isBit(16)) ? src : src.changeBit(16));
-      CallModuleFunction(LoadSegmentRegisterTrampoline);
-    }
-    break;
-
-    case AddressingMode_Direct:
-    case AddressingMode_RegisterIndirect:
-    case AddressingMode_Indexed:
-    case AddressingMode_BasedIndexed:
-    case AddressingMode_BasedIndexedDisplacement:
-    case AddressingMode_SIB:
-    {
-      mov(RPARAM1_64, RCPUPTR);
-      mov(RPARAM2_32, uint32(instruction->segment));
-      if (operand->mode == AddressingMode_Direct)
-        mov(RPARAM3_32, operand->direct.address);
-      else
-        mov(RPARAM3_32, READDR32);
-
-      switch (operand->size)
-      {
-        case OperandSize_8:
-          movzx(RPARAM4_32, src);
-          CallModuleFunction(WriteMemoryByteTrampoline);
-          break;
-        case OperandSize_16:
-          movzx(RPARAM4_32, src);
-          CallModuleFunction(WriteMemoryWordTrampoline);
-          break;
-        case OperandSize_32:
-          mov(RPARAM4_32, src);
-          CallModuleFunction(WriteMemoryDWordTrampoline);
-          break;
-      }
-    }
-    break;
-
-    default:
-      Panic("Unhandled address mode");
-      break;
-  }
 #endif
 }
 
-void RecompilerCodeGenerator::ReadFarAddressOperand(const Instruction* instruction, size_t index,
-                                                    const Xbyak::Reg& dest_segment, const Xbyak::Reg& dest_offset)
+void CodeGenerator::ReadFarAddressOperand(const Instruction* instruction, size_t index, const Xbyak::Reg& dest_segment,
+                                          const Xbyak::Reg& dest_offset)
 {
 #if 0
   const Instruction::Operand* operand = &instruction->operands[index];
@@ -756,7 +1066,7 @@ void RecompilerCodeGenerator::ReadFarAddressOperand(const Instruction* instructi
 #endif
 }
 
-void RecompilerCodeGenerator::UpdateFlags(uint32 clear_mask, uint32 set_mask, uint32 host_mask)
+void CodeGenerator::UpdateFlags(uint32 clear_mask, uint32 set_mask, uint32 host_mask)
 {
   // Shouldn't be clearing/setting any bits we're also getting from the host.
   DebugAssert((host_mask & clear_mask) == 0 && (host_mask & set_mask) == 0);
@@ -823,7 +1133,7 @@ void RecompilerCodeGenerator::UpdateFlags(uint32 clear_mask, uint32 set_mask, ui
   }
 }
 
-void RecompilerCodeGenerator::SyncInstructionPointers(const Instruction* next_instruction)
+void CodeGenerator::SyncInstructionPointers(const Instruction* next_instruction)
 {
   if (next_instruction->GetAddressSize() == AddressSize_16)
   {
@@ -860,7 +1170,7 @@ void RecompilerCodeGenerator::SyncInstructionPointers(const Instruction* next_in
   m_delayed_cycles_add = 0;
 }
 
-void RecompilerCodeGenerator::StartInstruction(const Instruction* instruction)
+void CodeGenerator::StartInstruction(const Instruction* instruction)
 {
 #ifndef Y_BUILD_CONFIG_RELEASE
   nop();
@@ -913,7 +1223,7 @@ void RecompilerCodeGenerator::StartInstruction(const Instruction* instruction)
   m_delayed_cycles_add = 0;
 }
 
-void RecompilerCodeGenerator::EndInstruction(const Instruction* instruction, bool update_eip, bool update_esp)
+void CodeGenerator::EndInstruction(const Instruction* instruction, bool update_eip, bool update_esp)
 {
   if (CanInstructionFault(instruction))
   {
@@ -950,7 +1260,7 @@ void RecompilerCodeGenerator::EndInstruction(const Instruction* instruction, boo
 #endif
 }
 
-bool RecompilerCodeGenerator::Compile_NOP(const Instruction* instruction)
+bool CodeGenerator::Compile_NOP(const Instruction* instruction)
 {
   StartInstruction(instruction);
   EndInstruction(instruction);
@@ -1571,62 +1881,62 @@ bool JitX64CodeGenerator::Compile_DoublePrecisionShift(const Instruction* instru
 #endif
 
 // Necessary due to BranchTo being a member function.
-void RecompilerCodeGenerator::BranchToTrampoline(CPU* cpu, uint32 address)
+void CodeGenerator::BranchToTrampoline(CPU* cpu, uint32 address)
 {
   cpu->BranchTo(address);
 }
 
-void RecompilerCodeGenerator::PushWordTrampoline(CPU* cpu, uint16 value)
+void CodeGenerator::PushWordTrampoline(CPU* cpu, uint16 value)
 {
   cpu->PushWord(value);
 }
 
-void RecompilerCodeGenerator::PushDWordTrampoline(CPU* cpu, uint32 value)
+void CodeGenerator::PushDWordTrampoline(CPU* cpu, uint32 value)
 {
   cpu->PushDWord(value);
 }
 
-uint16 RecompilerCodeGenerator::PopWordTrampoline(CPU* cpu)
+uint16 CodeGenerator::PopWordTrampoline(CPU* cpu)
 {
   return cpu->PopWord();
 }
 
-uint32 RecompilerCodeGenerator::PopDWordTrampoline(CPU* cpu)
+uint32 CodeGenerator::PopDWordTrampoline(CPU* cpu)
 {
   return cpu->PopDWord();
 }
 
-void RecompilerCodeGenerator::LoadSegmentRegisterTrampoline(CPU* cpu, uint32 segment, uint16 value)
+void CodeGenerator::LoadSegmentRegisterTrampoline(CPU* cpu, uint32 segment, uint16 value)
 {
   cpu->LoadSegmentRegister(static_cast<Segment>(segment), value);
 }
 
-void RecompilerCodeGenerator::RaiseExceptionTrampoline(CPU* cpu, uint32 interrupt, uint32 error_code)
+void CodeGenerator::RaiseExceptionTrampoline(CPU* cpu, uint32 interrupt, uint32 error_code)
 {
   cpu->RaiseException(interrupt, error_code);
 }
 
-void RecompilerCodeGenerator::SetFlagsTrampoline(CPU* cpu, uint32 flags)
+void CodeGenerator::SetFlagsTrampoline(CPU* cpu, uint32 flags)
 {
   cpu->SetFlags(flags);
 }
 
-void RecompilerCodeGenerator::FarJumpTrampoline(CPU* cpu, uint16 segment_selector, uint32 offset, uint32 op_size)
+void CodeGenerator::FarJumpTrampoline(CPU* cpu, uint16 segment_selector, uint32 offset, uint32 op_size)
 {
   cpu->FarJump(segment_selector, offset, static_cast<OperandSize>(op_size));
 }
 
-void RecompilerCodeGenerator::FarCallTrampoline(CPU* cpu, uint16 segment_selector, uint32 offset, uint32 op_size)
+void CodeGenerator::FarCallTrampoline(CPU* cpu, uint16 segment_selector, uint32 offset, uint32 op_size)
 {
   cpu->FarCall(segment_selector, offset, static_cast<OperandSize>(op_size));
 }
 
-void RecompilerCodeGenerator::FarReturnTrampoline(CPU* cpu, uint32 op_size, uint32 pop_count)
+void CodeGenerator::FarReturnTrampoline(CPU* cpu, uint32 op_size, uint32 pop_count)
 {
   cpu->FarReturn(static_cast<OperandSize>(op_size), pop_count);
 }
 
-bool RecompilerCodeGenerator::Compile_JumpConditional(const Instruction* instruction)
+bool CodeGenerator::Compile_JumpConditional(const Instruction* instruction)
 {
   StartInstruction(instruction);
 
@@ -1820,7 +2130,7 @@ bool RecompilerCodeGenerator::Compile_JumpConditional(const Instruction* instruc
   return true;
 }
 
-bool RecompilerCodeGenerator::Compile_JumpCallReturn(const Instruction* instruction)
+bool CodeGenerator::Compile_JumpCallReturn(const Instruction* instruction)
 {
   StartInstruction(instruction);
   CalculateEffectiveAddress(instruction);
@@ -1975,7 +2285,7 @@ bool RecompilerCodeGenerator::Compile_JumpCallReturn(const Instruction* instruct
   return true;
 }
 
-bool RecompilerCodeGenerator::Compile_Stack(const Instruction* instruction)
+bool CodeGenerator::Compile_Stack(const Instruction* instruction)
 {
   // if (instruction->operands[0].mode == AddressingMode_SegmentRegister && instruction->operation == Operation_POP)
   // return Compile_Fallback(instruction);
@@ -2091,7 +2401,7 @@ bool RecompilerCodeGenerator::Compile_Stack(const Instruction* instruction)
   return true;
 }
 
-bool RecompilerCodeGenerator::Compile_Flags(const Instruction* instruction)
+bool CodeGenerator::Compile_Flags(const Instruction* instruction)
 {
   StartInstruction(instruction);
 
@@ -2115,14 +2425,14 @@ bool RecompilerCodeGenerator::Compile_Flags(const Instruction* instruction)
   return true;
 }
 
-void RecompilerCodeGenerator::InterpretInstructionTrampoline(CPU* cpu, const Instruction* instruction)
+void CodeGenerator::InterpretInstructionTrampoline(CPU* cpu, const Instruction* instruction)
 {
   std::memcpy(&cpu->idata, &instruction->data, sizeof(cpu->idata));
   // instruction->interpreter_handler(cpu);
   Panic("Fixme");
 }
 
-bool RecompilerCodeGenerator::Compile_Fallback(const Instruction* instruction)
+bool CodeGenerator::Compile_Fallback(const Instruction* instruction)
 {
   // REP instructions are always annoying.
   std::unique_ptr<Xbyak::Label> rep_label;
@@ -2172,4 +2482,7 @@ bool RecompilerCodeGenerator::Compile_Fallback(const Instruction* instruction)
   EndInstruction(instruction, true, true);
   return true;
 }
-} // namespace CPU_X86
+
+
+
+} // namespace CPU_X86::Recompiler

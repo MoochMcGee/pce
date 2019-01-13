@@ -26,9 +26,11 @@ enum {
 };
 #line 9 "recompiler_code_generator_x64.dasc.cpp"
 //| .actionlist g_action_list
-static const unsigned char g_action_list[39] = {
-  129,134,233,239,255,252,255,134,233,255,72,137,252,241,73,187,237,237,76,
-  137,158,233,73,187,237,237,76,137,158,233,73,187,237,237,65,252,255,211,255
+static const unsigned char g_action_list[66] = {
+  83,65,84,65,85,65,86,86,72,129,252,236,239,255,72,129,196,239,94,65,94,65,
+  93,65,92,91,255,129,134,233,239,255,252,255,134,233,255,72,137,252,241,73,
+  187,237,237,76,137,158,233,73,187,237,237,76,137,158,233,73,187,237,237,65,
+  252,255,211,255
 };
 
 #line 10 "recompiler_code_generator_x64.dasc.cpp"
@@ -147,13 +149,47 @@ static const unsigned char g_action_list[39] = {
 #define Dt1(_V) (int)(ptrdiff_t)&(((CPU *)0)_V)
 #line 122 "recompiler_code_generator_x64.dasc.cpp"
 
-namespace CPU_X86 {
+namespace CPU_X86::Recompiler {
 
 #define Dst &(m_dasm_state)
 
-void RecompilerCodeGenerator::StartInstruction(const Instruction* instruction)
+void CodeGenerator::InitHostRegs()
 {
-  if (!CanInstructionFault(instruction))
+
+}
+
+void CodeGenerator::BeginBlock()
+{
+  // TODO: Only push these if they're actually used..
+  //| .if ABI_WIN64
+  //| push rbx
+  //| push r12
+  //| push r13
+  //| push r14
+  //| push rsi
+  //| sub rsp, 20h
+  //| .endif
+  dasm_put(Dst, 0, 20h);
+#line 143 "recompiler_code_generator_x64.dasc.cpp"
+}
+
+void CodeGenerator::EndBlock()
+{
+  //| .if ABI_WIN64
+  //| add rsp, 20h
+  //| pop rsi
+  //| pop r14
+  //| pop r13
+  //| pop r12
+  //| pop rbx
+  //| .endif
+  dasm_put(Dst, 14, 20h);
+#line 155 "recompiler_code_generator_x64.dasc.cpp"
+}
+
+void CodeGenerator::StartInstruction(const Instruction* instruction)
+{
+  if (!CodeCacheBackend::CanInstructionFault(instruction))
   {
     // Defer updates for non-faulting instructions.
     m_delayed_eip_add += instruction->length;
@@ -168,12 +204,12 @@ void RecompilerCodeGenerator::StartInstruction(const Instruction* instruction)
     // Add pending EndInstruction(), since we clear delayed_eip_add
     if (m_delayed_eip_add > 1)
       //| add dword CPU->m_current_EIP, m_delayed_eip_add
-      dasm_put(Dst, 0, Dt1(->m_current_EIP), m_delayed_eip_add);
-#line 144 "recompiler_code_generator_x64.dasc.cpp"
+      dasm_put(Dst, 27, Dt1(->m_current_EIP), m_delayed_eip_add);
+#line 174 "recompiler_code_generator_x64.dasc.cpp"
     else if (m_delayed_eip_add == 1)
       //| inc dword CPU->m_current_EIP
-      dasm_put(Dst, 5, Dt1(->m_current_EIP));
-#line 146 "recompiler_code_generator_x64.dasc.cpp"
+      dasm_put(Dst, 32, Dt1(->m_current_EIP));
+#line 176 "recompiler_code_generator_x64.dasc.cpp"
 
     if (inst_len > 1)
       add dword CPU->m_registers.EIP, inst_len
@@ -185,21 +221,21 @@ void RecompilerCodeGenerator::StartInstruction(const Instruction* instruction)
     // Add pending EndInstruction(), since we clear delayed_eip_add
     if (m_delayed_eip_add > 1)
       //| add dword CPU->m_current_EIP, m_delayed_eip_add
-      dasm_put(Dst, 0, Dt1(->m_current_EIP), m_delayed_eip_add);
-#line 157 "recompiler_code_generator_x64.dasc.cpp"
+      dasm_put(Dst, 27, Dt1(->m_current_EIP), m_delayed_eip_add);
+#line 187 "recompiler_code_generator_x64.dasc.cpp"
     else if (m_delayed_eip_add == 1)
       //| inc dword CPU->m_current_EIP
-      dasm_put(Dst, 5, Dt1(->m_current_EIP));
-#line 159 "recompiler_code_generator_x64.dasc.cpp"
+      dasm_put(Dst, 32, Dt1(->m_current_EIP));
+#line 189 "recompiler_code_generator_x64.dasc.cpp"
 
     if (inst_len > 1)
       //| add dword CPU->m_registers.EIP, inst_len
-      dasm_put(Dst, 0, Dt1(->m_registers.EIP), inst_len);
-#line 162 "recompiler_code_generator_x64.dasc.cpp"
+      dasm_put(Dst, 27, Dt1(->m_registers.EIP), inst_len);
+#line 192 "recompiler_code_generator_x64.dasc.cpp"
     else
       //| inc dword CPU->m_registers.EIP
-      dasm_put(Dst, 5, Dt1(->m_registers.EIP));
-#line 164 "recompiler_code_generator_x64.dasc.cpp"
+      dasm_put(Dst, 32, Dt1(->m_registers.EIP));
+#line 194 "recompiler_code_generator_x64.dasc.cpp"
   }
   m_delayed_eip_add = 0;
 
@@ -212,7 +248,7 @@ void RecompilerCodeGenerator::StartInstruction(const Instruction* instruction)
   m_delayed_cycles_add = 0;
 }
 
-bool RecompilerCodeGenerator::Compile_Fallback(const Instruction* instruction)
+bool CodeGenerator::Compile_Fallback(const Instruction* instruction)
 {
   Interpreter::HandlerFunction interpreter_handler = Interpreter::GetInterpreterHandlerForInstruction(instruction);
   if (!interpreter_handler)
@@ -229,12 +265,18 @@ bool RecompilerCodeGenerator::Compile_Fallback(const Instruction* instruction)
   //| mov CPU->idata.bits64[1], RSCRATCH64
   //| mov64 RSCRATCH64, reinterpret_cast<size_t>(interpreter_handler)
   //| call RSCRATCH64
-  dasm_put(Dst, 10, (unsigned int)(instruction->data.bits64[0]), (unsigned int)((instruction->data.bits64[0])>>32), Dt1(->idata.bits64[0]), (unsigned int)(instruction->data.bits64[1]), (unsigned int)((instruction->data.bits64[1])>>32), Dt1(->idata.bits64[1]), (unsigned int)(reinterpret_cast<size_t>(interpreter_handler)), (unsigned int)((reinterpret_cast<size_t>(interpreter_handler))>>32));
-#line 193 "recompiler_code_generator_x64.dasc.cpp"
+  dasm_put(Dst, 37, (unsigned int)(instruction->data.bits64[0]), (unsigned int)((instruction->data.bits64[0])>>32), Dt1(->idata.bits64[0]), (unsigned int)(instruction->data.bits64[1]), (unsigned int)((instruction->data.bits64[1])>>32), Dt1(->idata.bits64[1]), (unsigned int)(reinterpret_cast<size_t>(interpreter_handler)), (unsigned int)((reinterpret_cast<size_t>(interpreter_handler))>>32));
+#line 223 "recompiler_code_generator_x64.dasc.cpp"
 
   EndInstruction(instruction);
 }
 
+void CodeGenerator::Compile_MOV(const Instruction* instruction)
+{
+  // TODO: Get cycles
+  Value value = ReadOperand(instruction, 1, instruction->operands[0].size, false);
+  WriteOperand(instruction, 0, std::move(value));
+}
 
 
-}   // namespace CPU_X86
+}   // namespace CPU_X86::Recompiler

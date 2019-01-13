@@ -18,18 +18,18 @@ namespace CPU_X86 {
 extern bool TRACE_EXECUTION;
 extern uint32 TRACE_EXECUTION_LAST_EIP;
 
-RecompilerBackend::RecompilerBackend(CPU* cpu) : CodeCacheBackend(cpu), m_code_space(std::make_unique<JitCodeBuffer>())
+Backend::Backend(CPU* cpu) : CodeCacheBackend(cpu), m_code_space(std::make_unique<JitCodeBuffer>())
 {
 }
 
-RecompilerBackend::~RecompilerBackend() {}
+Backend::~Backend() {}
 
-void RecompilerBackend::Reset()
+void Backend::Reset()
 {
   CodeCacheBackend::Reset();
 }
 
-void RecompilerBackend::Execute()
+void Backend::Execute()
 {
   // We'll jump back here when an instruction is aborted.
   fastjmp_set(&m_jmp_buf);
@@ -48,7 +48,7 @@ void RecompilerBackend::Execute()
   }
 }
 
-void RecompilerBackend::AbortCurrentInstruction()
+void Backend::AbortCurrentInstruction()
 {
   // Since we won't return to the dispatcher, clean up the block here.
   if (m_current_block->destroy_pending)
@@ -62,11 +62,11 @@ void RecompilerBackend::AbortCurrentInstruction()
   fastjmp_jmp(&m_jmp_buf);
 }
 
-void RecompilerBackend::BranchTo(uint32 new_EIP) {}
+void Backend::BranchTo(uint32 new_EIP) {}
 
-void RecompilerBackend::BranchFromException(uint32 new_EIP) {}
+void Backend::BranchFromException(uint32 new_EIP) {}
 
-void RecompilerBackend::FlushCodeCache()
+void Backend::FlushCodeCache()
 {
   // Prevent the current block from being flushed.
   if (m_current_block)
@@ -76,12 +76,12 @@ void RecompilerBackend::FlushCodeCache()
   m_code_space->Reset();
 }
 
-CodeCacheBackend::BlockBase* RecompilerBackend::AllocateBlock(const BlockKey key)
+CodeCacheBackend::BlockBase* Backend::AllocateBlock(const BlockKey key)
 {
   return new Block(key);
 }
 
-bool RecompilerBackend::CompileBlock(BlockBase* block)
+bool Backend::CompileBlock(BlockBase* block)
 {
   if (!CompileBlockBase(block))
     return false;
@@ -98,7 +98,7 @@ bool RecompilerBackend::CompileBlock(BlockBase* block)
   }
 
   // JitX64CodeGenerator codegen(this, reinterpret_cast<void*>(block->code_pointer), block->code_size);
-  RecompilerCodeGenerator codegen(this, m_code_space->GetFreeCodePointer(), m_code_space->GetFreeCodeSpace());
+  CodeGenerator codegen(this, m_code_space->GetFreeCodePointer(), m_code_space->GetFreeCodeSpace());
   // for (const Instruction& instruction : block->instructions)
   for (size_t i = 0; i < block->instructions.size(); i++)
   {
@@ -115,14 +115,14 @@ bool RecompilerBackend::CompileBlock(BlockBase* block)
   return true;
 }
 
-void RecompilerBackend::ResetBlock(BlockBase* block)
+void Backend::ResetBlock(BlockBase* block)
 {
   static_cast<Block*>(block)->code_pointer = nullptr;
   static_cast<Block*>(block)->code_size = 0;
   CodeCacheBackend::ResetBlock(block);
 }
 
-void RecompilerBackend::FlushBlock(BlockBase* block, bool defer_destroy /* = false */)
+void Backend::FlushBlock(BlockBase* block, bool defer_destroy /* = false */)
 {
   // Defer flush to after execution.
   if (m_current_block == block)
@@ -131,12 +131,12 @@ void RecompilerBackend::FlushBlock(BlockBase* block, bool defer_destroy /* = fal
   CodeCacheBackend::FlushBlock(block, defer_destroy);
 }
 
-void RecompilerBackend::DestroyBlock(BlockBase* block)
+void Backend::DestroyBlock(BlockBase* block)
 {
   delete static_cast<Block*>(block);
 }
 
-void RecompilerBackend::Dispatch()
+void Backend::Dispatch()
 {
   // Block flush pending?
   if (m_code_buffer_overflow)

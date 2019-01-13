@@ -532,7 +532,7 @@ void CPU::CreateBackend()
       break;
 
     case BackendType::Recompiler:
-      m_backend = std::make_unique<RecompilerBackend>(this);
+      m_backend = std::make_unique<Recompiler::Backend>(this);
       break;
 
     default:

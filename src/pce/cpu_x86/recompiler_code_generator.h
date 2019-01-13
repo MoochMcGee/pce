@@ -1,107 +1,141 @@
 #pragma once
+#include <array>
+#include <initializer_list>
 #include <utility>
 
+#include "pce/types.h"
+
+#include "pce/cpu_x86/types.h"
 #include "pce/cpu_x86/decoder.h"
 #include "pce/cpu_x86/recompiler_backend.h"
-#include "xbyak.h"
-
-// ABI Selection
-#include "YBaseLib/Common.h"
-#if defined(Y_PLATFORM_WINDOWS)
-#define ABI_WIN64 1
-#elif defined(Y_PLATFORM_LINUX) || defined(Y_PLATFORM_ANDROID) || defined(Y_PLATFORM_OSX)
-#define ABI_SYSV 1
-#else
-#error Unknown platform/ABI.
-#endif
 
 struct dasm_State;
 
-// TODO: Block leaking on invalidation
-// TODO: Remove physical references when block is destroyed
-// TODO: block linking
-// TODO: memcpy-like stuff from bus for validation
+namespace CPU_X86::Recompiler {
 
-namespace CPU_X86 {
-
-class RecompilerCodeGenerator : private Xbyak::CodeGenerator
+class CodeGenerator
 {
 public:
-  RecompilerCodeGenerator(RecompilerBackend* backend, void* code_ptr, size_t code_size);
-  ~RecompilerCodeGenerator();
+  CodeGenerator(Backend* backend, Block* block);
+  ~CodeGenerator();
 
-  std::pair<const void*, size_t> FinishBlock();
-
-  bool CompileInstruction(const Instruction* instruction, bool is_final);
+  bool CompileBlock();
 
 private:
-  RecompilerBackend* m_backend;
-  CPU* m_cpu;
+  u32 CalculateRegisterOffset(Reg8 reg);
+  u32 CalculateRegisterOffset(Reg16 reg);
+  u32 CalculateRegisterOffset(Reg32 reg);
+  u32 CalculateSegmentRegisterOffset(Segment segment);
 
-  // Temp registers, destroyed on function call
-  const Xbyak::Reg8 &RTEMP8A, RTEMP8B, RTEMP8C;
-  const Xbyak::Reg16 &RTEMP16A, RTEMP16B, RTEMP16C;
-  const Xbyak::Reg32 &RTEMP32A, RTEMP32B, RTEMP32C;
-  const Xbyak::Reg64 &RTEMP64A, RTEMP64B, RTEMP64C;
-  const Xbyak::Reg64& RTEMPADDR;
+  //////////////////////////////////////////////////////////////////////////
+  // Register Allocation/Cache
+  //////////////////////////////////////////////////////////////////////////
+  void SetHostRegAllocationOrder(std::initializer_list<HostReg> regs);
+  void SetCallerSavedHostRegs(std::initializer_list<HostReg> regs);
 
-  // Store registers, saved on function call
-  const Xbyak::Reg8 &RSTORE8A, RSTORE8B, RSTORE8C;
-  const Xbyak::Reg16 &RSTORE16A, RSTORE16B, RSTORE16C;
-  const Xbyak::Reg32 &RSTORE32A, RSTORE32B, RSTORE32C;
-  const Xbyak::Reg64 &RSTORE64A, RSTORE64B, RSTORE64C;
-  const Xbyak::Reg16& READDR16;
-  const Xbyak::Reg32& READDR32;
-  const Xbyak::Reg64& READDR64;
+  /// Returns true if the register is permitted to be used in the register cache.
+  bool IsCacheableHostRegister(HostReg reg) const;
 
-  // CPU structure pointer
-  const Xbyak::Reg64& RCPUPTR;
+  HostReg AllocateHostReg(OperandSize size, HostRegState state = HostRegState::InUse);
+  Value AllocateTemporaryHostReg(OperandSize size);
+  void FreeHostReg(HostReg reg);
+  void ReleaseValue(Value& value);
+  void ConvertValueSize(Value& value, OperandSize size, bool sign_extend);
 
-  // Temp register used in internal stuff
-  const Xbyak::Reg64& RSCRATCH64;
-  const Xbyak::Reg32& RSCRATCH32;
-  const Xbyak::Reg16& RSCRATCH16;
-  const Xbyak::Reg8& RSCRATCH8;
+  void FlushOverlappingGuestRegisters(Reg8 guest_reg);
+  void FlushOverlappingGuestRegisters(Reg16 guest_reg);
+  void FlushOverlappingGuestRegisters(Reg32 guest_reg);
 
-  // Registers used for function calls.
-  // NOTE: gcc expects high order bits to be zero?
-  const Xbyak::Reg8 &RPARAM1_8, RPARAM2_8, RPARAM3_8, RPARAM4_8, RRET_8;
-  const Xbyak::Reg16 &RPARAM1_16, RPARAM2_16, RPARAM3_16, RPARAM4_16, RRET_16;
-  const Xbyak::Reg32 &RPARAM1_32, RPARAM2_32, RPARAM3_32, RPARAM4_32, RRET_32;
-  const Xbyak::Reg64 &RPARAM1_64, RPARAM2_64, RPARAM3_64, RPARAM4_64, RRET_64;
+  Value ReadGuestRegister(Reg8 guest_reg, bool cache = true);
+  Value ReadGuestRegister(Reg16 guest_reg, bool cache = true);
+  Value ReadGuestRegister(Reg32 guest_reg, bool cache = true);
 
-  uint32 m_delayed_eip_add = 0;
-  uint32 m_delayed_cycles_add = 0;
+  /// Creates a copy of value, and stores it to guest_reg.
+  void WriteGuestRegister(Reg8 guest_reg, Value&& value);
+  void WriteGuestRegister(Reg16 guest_reg, Value&& value);
+  void WriteGuestRegister(Reg32 guest_reg, Value&& value);
+  
+  /// Binds host_reg to guest_reg, ignoring any previously cached value.
+  void BindHostRegToGuestReg(HostReg host_reg, Reg8 guest_reg);
+  void BindHostRegToGuestReg(HostReg host_reg, Reg16 guest_reg);
+  void BindHostRegToGuestReg(HostReg host_reg, Reg32 guest_reg);
 
-  // Calculate the offset relative to the module for a given function
-  /*static void DummyFunction() {}
-  template<typename T> uint32 CalcModuleRelativeOffset(T param)
-  {
-      const ptrdiff_t base = reinterpret_cast<ptrdiff_t>(&JitModuleDummyVariable);
-      ptrdiff_t diff = reinterpret_cast<ptrdiff_t>(param) - base;
-      DebugAssert(Xbyak::inner::IsInInt32(static_cast<uint64>(diff)));
-      return static_cast<uint32>(static_cast<uint64>(diff));
-  }*/
-  template<typename T>
-  void CallModuleFunction(T param)
-  {
-    // uint32 rel = CalcModuleRelativeOffset(param);
-    // lea(RSCRATCH, qword[RMODULE + rel]);
-    // call(RSCRATCH);
-    mov(RSCRATCH64, reinterpret_cast<size_t>(param));
-    call(RSCRATCH64);
-  }
+  void FlushGuestRegister(Reg8 guest_reg, bool invalidate);
+  void FlushGuestRegister(Reg16 guest_reg, bool invalidate);
+  void FlushGuestRegister(Reg32 guest_reg, bool invalidate);
+  void InvalidateGuestRegister(Reg8 guest_reg);
+  void InvalidateGuestRegister(Reg16 guest_reg);
+  void InvalidateGuestRegister(Reg32 guest_reg);
 
-  // Can destroy temporary registers.
-  uint32 CalculateRegisterOffset(Reg8 reg);
-  uint32 CalculateRegisterOffset(Reg16 reg);
-  uint32 CalculateRegisterOffset(Reg32 reg);
-  uint32 CalculateSegmentRegisterOffset(Segment segment);
-  void CalculateEffectiveAddress(const Instruction* instruction);
+  void FlushGuestRegister(OperandSize guest_size, u8 guest_reg, bool invalidate);
+  void FlushAllGuestRegisters(bool invalidate);
+  HostReg EvictOneGuestRegister();
+
+  //////////////////////////////////////////////////////////////////////////
+  // Helpers
+  //////////////////////////////////////////////////////////////////////////
   bool IsConstantOperand(const Instruction* instruction, size_t index);
-  uint32 GetConstantOperand(const Instruction* instruction, size_t index, bool sign_extend);
-  void ReadOperand(const Instruction* instruction, size_t index, const Xbyak::Reg& dest, bool sign_extend);
-  void WriteOperand(const Instruction* instruction, size_t index, const Xbyak::Reg& dest);
+  u32 GetConstantOperand(const Instruction* instruction, size_t index, bool sign_extend);
+  bool CompileInstruction(const Instruction* instruction, bool is_final);
+
+  //////////////////////////////////////////////////////////////////////////
+  // Code Generation
+  //////////////////////////////////////////////////////////////////////////
+  void BeginBlock();
+  void EndBlock();
+
+  void PushLockedHostRegisters();
+  void PopLockedHostRegisters();
+
+  void EmitSignExtend(HostReg to_reg, OperandSize to_size, HostReg from_reg, OperandSize from_size);
+  void EmitCopyValue(HostReg to_reg, const Value& value);
+
+  void EmitLoadGuestRegister(HostReg host_reg, OperandSize guest_size, u8 guest_reg);
+  void EmitStoreGuestRegister(OperandSize guest_size, u8 guest_reg);
+  void EmitLoadCPUStructField(HostReg host_reg, OperandSize guest_size, u32 offset);
+  
+  HostReg EmitLoadGuestMemory(OperandSize size, const Value& address, Segment segment);
+  void EmitStoreGuestMemory(const Value& value, const Value& address, Segment segment);
+
+  //////////////////////////////////////////////////////////////////////////
+  // Code Generation Helpers
+  //////////////////////////////////////////////////////////////////////////
+  Value CalculateEffectiveAddress(const Instruction* instruction, size_t index);
+  Value ReadOperand(const Instruction* instruction, size_t index, OperandSize output_size, bool sign_extend);
+  void WriteOperand(const Instruction* instruction, size_t index, Value&& value);
+
+  //////////////////////////////////////////////////////////////////////////
+  // Instruction Code Generators
+  //////////////////////////////////////////////////////////////////////////
+  bool Compile_NOP(const Instruction* instruction);
+  bool Compile_LEA(const Instruction* instruction);
+  bool Compile_MOV(const Instruction* instruction);
+
+
+  Backend* m_backend;
+  Block* m_block;
+  const Instruction* m_block_start;
+  const Instruction* m_block_end;
+
+  struct HostRegData
+  {
+    HostRegState state;
+    OperandSize size;
+  };
+  std::array<HostRegData, HostReg_Count> m_host_registers{};
+  std::array<HostReg, HostReg_Count> m_host_register_allocation_order{};
+  u32 m_host_register_available_count = 0;
+
+  std::array<GuestRegData, Reg8_Count> m_guest_reg8_state{};
+  std::array<GuestRegData, Reg16_Count> m_guest_reg16_state{};
+  std::array<GuestRegData, Reg32_Count> m_guest_reg32_state{};
+
+  u32 m_delayed_eip_add = 0;
+  u32 m_delayed_cycles_add = 0;
+
+  std::array<Value, 3> m_operand_memory_addresses{};
+
+#if 0
   void ReadFarAddressOperand(const Instruction* instruction, size_t index, const Xbyak::Reg& dest_segment,
                              const Xbyak::Reg& dest_offset);
   void UpdateFlags(uint32 clear_mask, uint32 set_mask, uint32 host_mask);
@@ -139,6 +173,7 @@ private:
   static void FarCallTrampoline(CPU* cpu, uint16 segment_selector, uint32 offset, uint32 op_size);
   static void FarReturnTrampoline(CPU* cpu, uint32 op_size, uint32 pop_count);
   static void InterpretInstructionTrampoline(CPU* cpu, const Instruction* instruction);
+#endif
 };
 
 } // namespace CPU_X86

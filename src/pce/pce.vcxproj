@@ -44,14 +44,32 @@
     <ClCompile Include="cpu_x86\interpreter_backend.cpp" />
     <ClCompile Include="cpu_x86\cycles.cpp" />
     <ClCompile Include="cpu_x86\recompiler_code_generator_x64.cpp" />
-    <ClCompile Include="cpu_x86\recompiler_code_generator_x64.dasc.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugFast|Win32'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='DebugFast|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
-    </ClCompile>
+    <CustomBuild Include="cpu_x86\recompiler_code_generator_x64.dasc.cpp">
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">cd $(ProjectDir)cpu_x86
+$(SolutionDir)dep\msvc\bin32\lua.exe $(SolutionDir)dep\dynasm\dynasm.lua -D ABI_WIN64=1 -o recompiler_code_generator_x64.cpp recompiler_code_generator_x64.dasc.cpp</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugFast|Win32'">cd $(ProjectDir)cpu_x86
+$(SolutionDir)dep\msvc\bin32\lua.exe $(SolutionDir)dep\dynasm\dynasm.lua -D ABI_WIN64=1 -o recompiler_code_generator_x64.cpp recompiler_code_generator_x64.dasc.cpp</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">cd $(ProjectDir)cpu_x86
+$(SolutionDir)dep\msvc\bin32\lua.exe $(SolutionDir)dep\dynasm\dynasm.lua -D ABI_WIN64=1 -o recompiler_code_generator_x64.cpp recompiler_code_generator_x64.dasc.cpp</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">cd $(ProjectDir)cpu_x86
+$(SolutionDir)dep\msvc\bin32\lua.exe $(SolutionDir)dep\dynasm\dynasm.lua -D ABI_WIN64=1 -o recompiler_code_generator_x64.cpp recompiler_code_generator_x64.dasc.cpp</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='DebugFast|x64'">cd $(ProjectDir)cpu_x86
+$(SolutionDir)dep\msvc\bin32\lua.exe $(SolutionDir)dep\dynasm\dynasm.lua -D ABI_WIN64=1 -o recompiler_code_generator_x64.cpp recompiler_code_generator_x64.dasc.cpp</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">cd $(ProjectDir)cpu_x86
+$(SolutionDir)dep\msvc\bin32\lua.exe $(SolutionDir)dep\dynasm\dynasm.lua -D ABI_WIN64=1 -o recompiler_code_generator_x64.cpp recompiler_code_generator_x64.dasc.cpp</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(ProjectDir)cpu_x86\recompiler_code_generator_x64.cpp;%(Outputs)</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugFast|Win32'">$(ProjectDir)cpu_x86\recompiler_code_generator_x64.cpp;%(Outputs)</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">$(ProjectDir)cpu_x86\recompiler_code_generator_x64.cpp;%(Outputs)</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)cpu_x86\recompiler_code_generator_x64.cpp;%(Outputs)</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='DebugFast|x64'">$(ProjectDir)cpu_x86\recompiler_code_generator_x64.cpp;%(Outputs)</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)cpu_x86\recompiler_code_generator_x64.cpp;%(Outputs)</Outputs>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Preprocessing recompiler_code_generator_x64.dasc.cpp...</Message>
+      <Message Condition="'$(Configuration)|$(Platform)'=='DebugFast|Win32'">Preprocessing recompiler_code_generator_x64.dasc.cpp...</Message>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Preprocessing recompiler_code_generator_x64.dasc.cpp...</Message>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Preprocessing recompiler_code_generator_x64.dasc.cpp...</Message>
+      <Message Condition="'$(Configuration)|$(Platform)'=='DebugFast|x64'">Preprocessing recompiler_code_generator_x64.dasc.cpp...</Message>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Preprocessing recompiler_code_generator_x64.dasc.cpp...</Message>
+    </CustomBuild>
     <ClCompile Include="dma_controller.cpp" />
     <ClCompile Include="hw\adlib.cpp" />
     <ClCompile Include="hw\ata_device.cpp" />
@@ -124,6 +142,7 @@
     <ClInclude Include="cpu_x86\interpreter_backend.h" />
     <ClInclude Include="cpu_x86\interpreter.inl" />
     <ClInclude Include="cpu_x86\cycles.h" />
+    <ClInclude Include="cpu_x86\recompiler_types.h" />
     <ClInclude Include="cpu_x86\types.h" />
     <ClInclude Include="debugger_interface.h" />
     <ClInclude Include="dma_controller.h" />
